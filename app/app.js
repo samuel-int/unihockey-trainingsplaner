@@ -221,7 +221,7 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
       const v = tr[s.key]; if (!v) continue;
       const type = slotType(s.label), it = mkItem(type, v, s.min);
       if (s.label === 'Athletik') { const se = athSession(b, n, v); it.name = 'Athletik: ' + v; it.desc = se ? se.items.map(athLine).join('\n') : ''; }
-      else { const nt = note(norm(v)); it.desc = nt.desc || ''; if (nt.goalie) it.gNote = nt.goalie; if (nt.mat) it.mat = nt.mat; }
+      else { const nt = note(norm(v)); it.desc = nt.desc || ''; it.coach = nt.coach || ''; if (nt.goalie) it.gNote = nt.goalie; if (nt.mat) it.mat = nt.mat; }
       it.g = gDef(type, b.main.sp, b.main.ef, n); if (it.gNote) { it.g.text = it.gNote; delete it.gNote; }
       items.push(it);
     }
@@ -241,7 +241,7 @@ function itemFromLib(e, t) {
   const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
   if (e.src === 'custom') { it.desc = [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'); it.coach = [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n'); }
   else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
-  else if (e.src === 'rtp') it.desc = nt.desc || '';
+  else if (e.src === 'rtp') { it.desc = nt.desc || ''; it.coach = nt.coach || ''; }
   it.g = e.kind === 'goalie' ? { mode: 'own', name: e.src === 'goalie' ? e.name : '', text: e.src === 'custom' ? e.desc || '' : '' }
     : { mode: 'team', name: '', text: nt.goalie || e.goalie || goalieFocus(type, [...e.sps][0] || t.sp, [...e.efs][0] || t.ef, t.stage) };
   return it;
@@ -416,9 +416,14 @@ function viewRead(t) {
 let wake = null;
 const mmss = s => `${s < 0 ? '+' : ''}${Math.floor(Math.abs(s) / 60)}:${String(Math.floor(Math.abs(s)) % 60).padStart(2, '0')}`;
 function runSet(t, i) { const r = S.run; r.i = Math.max(0, Math.min(t.items.length - 1, i)); r.left = (+t.items[r.i].min || 0) * 60; r.last = Date.now(); r.buzz = false; }
+// Stand des Hallenmodus merken: kommt man z. B. vom UTP-Link zurück und die App lädt neu, geht es bei derselben Übung weiter (Timer pausiert).
+const RUNKEY = 'unihockey-planer.run';
+function runKeep() { const r = S.run; try { if (r) localStorage.setItem(RUNKEY, JSON.stringify({ id: r.id, i: r.i, left: Math.round(r.left), ts: Date.now() })); else localStorage.removeItem(RUNKEY); } catch (e) { /* Speicher nicht verfügbar */ } }
+function runLoad(t) { try { const m = JSON.parse(localStorage.getItem(RUNKEY) || 'null'); return m && m.id === t.id && Date.now() - m.ts < 4 * 3600e3 && m.i >= 0 && m.i < t.items.length ? m : null; } catch (e) { return null; } }
+addEventListener('pagehide', runKeep); document.addEventListener('visibilitychange', () => { if (document.hidden && S.run) runKeep(); });
 function viewRun(t) {
   if (!t.items.length) return head('Hallenmodus', `/t/${t.id}`) + '<p class="muted center">Dieses Training hat noch keine Blöcke.</p>';
-  if (!S.run || S.run.id !== t.id) { S.run = { id: t.id, i: 0, on: false }; runSet(t, 0); }
+  if (!S.run || S.run.id !== t.id) { S.run = { id: t.id, i: 0, on: false }; runSet(t, 0); const m = runLoad(t); if (m) { runSet(t, m.i); S.run.left = m.left; S.run.started = true; } }
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
   return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
@@ -823,7 +828,7 @@ function render() {
   else html = viewHome();
   if (tab === '/season' || tab === '/cal') tab = '/';
   if (tab === '/team') tab = '/teams';
-  if (!run && S.run) { S.run = null; wakeLock(false); }
+  if (!run && S.run) { S.run = null; runKeep(); wakeLock(false); }
   document.body.classList.toggle('running', run);
   $('#app').innerHTML = html;
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
@@ -858,7 +863,7 @@ const A = {
     if (f.id) { tm = teamById(f.id); const mine = teamTrainings(tm); Object.assign(tm, vals); mine.forEach(t => setTeam(t, tm)); }
     else { tm = { id: uid(), ...vals }; DB.teams.push(tm); }
     mirrorLegacy(tm);
-    S.mf = null; save(); done(f.id ? `Mannschaft «${name}» gespeichert.` : `Mannschaft «${name}» angelegt – plane jetzt ihr erstes Training.`, `/team/${tm.id}`);
+    S.mf = null; save(); done(f.id ? `Mannschaft «${name}» gespeichert.` : `Mannschaft «${name}» angelegt – plane jetzt das erste Training.`, `/team/${tm.id}`);
   },
   delTeam(el) {
     const tm = teamById(el.dataset.id), n = teamTrainings(tm).length;
@@ -946,10 +951,10 @@ const A = {
   sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), tm = teamById(S.sTeam), sess = planSessions(seasonCfg(), tm).find(x => x.id === d.x), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d, sess, tm); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
   sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
-  runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
+  runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); runKeep(); render(); },
   runReset() { runSet(curT(), S.run.i); render(); },
-  runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); render(); scrollTo(0, 0); },
-  runExit() { wakeLock(false); },
+  runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); runKeep(); render(); scrollTo(0, 0); },
+  runExit() { wakeLock(false); S.run = null; runKeep(); },
 };
 document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
 document.addEventListener('click', ev => {
@@ -968,12 +973,15 @@ function onInput(ev) {
     const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
     touch(t); if (b === 'min') $('#sum').innerHTML = sumHtml(t);
+    if (k === 'i' && (b === 'desc' || b === 'coach')) {   // eigene Notizen/Keypoints bei der Übung merken (nicht bei eigenen Übungen und Athletik: dort ist das Feld der Übungstext selbst)
+      const key = matNoteKey(it), e = key && libGet(key); if (e && e.src === 'rtp' && it.type !== 'athletik') { const n = DB.notes[key] = DB.notes[key] || {}; n[b] = v; if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
+    }
     if (k === 'i' && b === 'mat') {
       if ($('#mat')) $('#mat').innerHTML = matCard(t, 'edit');
-      const key = matNoteKey(it); if (key) { const n = DB.notes[key] = DB.notes[key] || {}; n.mat = v; if (!n.desc && !n.goalie && !n.mat) delete DB.notes[key]; save(); }
+      const key = matNoteKey(it); if (key) { const n = DB.notes[key] = DB.notes[key] || {}; n.mat = v; if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
     }
   }
-  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat) delete DB.notes[key]; save(); }
+  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'f') { S.seed[a] = v; return; }
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
