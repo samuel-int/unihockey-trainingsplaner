@@ -101,3 +101,6 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .sess { border: 1px solid var(--line); border-radius: 12px; padding: 2px 10px 10px; margin: 8px 0; } .sess .row { align-items: flex-end; } .sess .row .btn { margin-bottom: 0; flex: none; }
 .sgrid { display: grid; grid-template-columns: 1.45fr 1fr .8fr; gap: 8px; } .sgrid select, .sgrid input { padding-left: 8px; padding-right: 6px; }
 .card.choice.sel { outline: 2px solid var(--pri); } .card.choice:disabled { opacity: .5; } .card.choice { margin: 8px 0; }
+
+/* Material */
+.matcard { border-left: 4px solid var(--gfg); } .matnone { margin: 6px 2px; }

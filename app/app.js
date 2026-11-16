@@ -202,7 +202,7 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
       const v = tr[s.key]; if (!v) continue;
       const type = slotType(s.label), it = mkItem(type, v, s.min);
       if (s.label === 'Athletik') { const se = athSession(b, n, v); it.name = 'Athletik: ' + v; it.desc = se ? se.items.map(athLine).join('\n') : ''; }
-      else { const nt = note(norm(v)); it.desc = nt.desc || ''; if (nt.goalie) it.gNote = nt.goalie; }
+      else { const nt = note(norm(v)); it.desc = nt.desc || ''; if (nt.goalie) it.gNote = nt.goalie; if (nt.mat) it.mat = nt.mat; }
       it.g = gDef(type, b.main.sp, b.main.ef, n); if (it.gNote) { it.g.text = it.gNote; delete it.gNote; }
       items.push(it);
     }
@@ -219,7 +219,7 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
 }
 function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
-  const nt = note(e.key); it.lib = e.key;
+  const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
   if (e.src === 'custom') { it.desc = [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'); it.coach = [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n'); }
   else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
   else if (e.src === 'rtp') it.desc = nt.desc || '';
@@ -300,6 +300,7 @@ function itemCard(t, it, i) {
       ${u ? `<p>${utpBtn(u)} <span class="small muted">Beschreibung, Skizze und Video bei swiss unihockey</span></p>` : ''}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
       <label>Beschreibung / Organisation<textarea data-b="i:${it.id}:desc" rows="3" placeholder="Ablauf, Feldgrösse, Material …">${esc(it.desc)}</textarea></label>
+      <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
       <label>Keypoints / Coachingfragen<textarea data-b="i:${it.id}:coach" rows="2">${esc(it.coach)}</textarea></label>
       <div class="gbox"><b>🧤 Goalie</b>
         <label>Rolle in diesem Block<select data-b="g:${it.id}:mode" data-r="1">${opt('team', 'Mit dem Team (im Tor / macht mit)', g.mode)}${opt('own', 'Eigene Goalie-Übung (parallel)', g.mode)}${opt('none', 'Nicht im Einsatz / Pause', g.mode)}</select></label>
@@ -313,7 +314,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>` + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -330,6 +331,28 @@ function viewEdit(t) {
   ${t.items.map((it, i) => itemCard(t, it, i)).join('') || '<p class="muted center">Noch keine Blöcke.</p>'}
   <div class="row wrap"><button class="btn pri" data-a="pick">+ Aus Bibliothek</button><button class="btn" data-a="addI">+ Leerer Block</button><button class="btn gbtn" data-a="addG">+ Goalie-Übung</button></div>
   <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><a class="btn" href="#/t/${t.id}/view">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
+}
+
+// ---------- Material (Kopfzeile des Trainings) ----------
+// Quellen: Feld it.mat je Übung (vom Trainer, wird pro Bibliotheks-Übung in DB.notes[key].mat gemerkt und bei neuen Trainings vorbelegt), Material der Goalie-Übungen und eigener Übungen.
+const NOMAT = /^(keine?s?|kein material|[-–])$/i;
+const matParts = s => String(s || '').split(/[,;\n]+/).map(x => x.trim()).filter(x => x && !NOMAT.test(x));
+const matKey = x => norm(x.replace(/^\d+(?:\s*[–-]\s*\d+)?\s*(?:x\s*)?/i, ''));   // Mengen vorne ignorieren: «10 Bälle» = «Bälle»
+const matNoteKey = it => it.lib || (it.type !== 'athletik' && it.name && libGet(norm(it.name)) ? norm(it.name) : '');
+function itemMatTxt(it) {   // eigene Angabe hat Vorrang; sonst Merkzettel der Übung bzw. Daten der Übung
+  if (it.mat !== undefined) return it.mat;
+  const k = matNoteKey(it), e = it.lib && libGet(it.lib);
+  return (k && note(k).mat) || (e && e.mat) || '';
+}
+function trainingMat(t) {
+  const m = new Map(), add = x => { const k = matKey(x); if (!k) return; const old = m.get(k); if (!old || (/^\d/.test(x) && !/^\d/.test(old))) m.set(k, x); };
+  t.items.forEach(it => { matParts(itemMatTxt(it)).forEach(add); const g = it.g, x = g && g.mode === 'own' && g.name ? goalieEx(g.name) : null; if (x) matParts(x.mat).forEach(add); });
+  return [...m.values()];
+}
+function matCard(t, mode) {
+  const l = trainingMat(t);
+  if (!l.length) return mode === 'edit' ? '<p class="small muted matnone">🎒 Material: noch nichts eingetragen – im aufgeklappten Block unter «Material» ergänzen.</p>' : '';
+  return `<div class="card matcard"><b>🎒 Material</b> <span class="small">${l.map(esc).join(' · ')}</span></div>`;
 }
 
 // ---------- RTP-Zusammenfassung (Erscheinungsform, Schwerpunkt, Ausbildungsziel, Regel-Fokus) ----------
@@ -364,7 +387,7 @@ function viewRead(t) {
   <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
     ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
-  ${rtpSummary(t)}
+  ${rtpSummary(t)}${matCard(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
     <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${itemUtp(it, t) ? `<p>${utpBtn(itemUtp(it, t), 'sm')}</p>` : ''}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
 }
@@ -379,7 +402,7 @@ function viewRun(t) {
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
   return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
-    ${r.i === 0 && !r.started ? rtpSummary(t) : ''}
+    ${r.i === 0 && !r.started ? rtpSummary(t) + matCard(t) : ''}
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
@@ -424,10 +447,11 @@ function viewLibItem(e) {
   const ty = TYPES[e.kind] || TYPES.sonst, pt = S.pick && getT(S.pick), nt = note(e.key), lu = e.src === 'rtp' ? utpUrl(e.name, libStage(e)) : '';
   let body = '';
   if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div><p class="small muted">${esc(G.note)}</p>`;
-  else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
+  else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['mat', 'Material'], ['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
     <div class="row"><a class="btn" href="#/lib/edit/${e.id}">Bearbeiten</a><button class="btn danger" data-a="delC" data-id="${e.id}">Löschen</button></div>`;
   else body = `${lu ? `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey (Unihockey-Trainingsplaner). Öffnet in einem neuen Tab, ohne Login; braucht Internet.</p></div>` : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<p class="small"><b>${esc(p.st)}:</b> ${esc([p.whg, p.serien && p.serien + ' Serien', p.gewicht, p.rhythmus].filter(Boolean).join(' · '))}${p.keypoints ? `<br>Keypoints: ${esc(p.keypoints)}` : ''}</p>`).join('')}</div>` : ''}
-    <div class="card"><label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
+    <div class="card"><label>🎒 Material (wird beim Hinzufügen ins Training übernommen)<input data-b="n:${esc(e.key)}:mat" value="${esc(nt.mat)}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
+    <label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
     ${e.kind !== 'athletik' ? `<label>🧤 Goalie-Hinweis zu dieser Übung<textarea data-b="n:${esc(e.key)}:goalie" rows="2" placeholder="${esc(goalieFocus(e.kind, [...e.sps][0], [...e.efs][0]))}">${esc(nt.goalie)}</textarea></label>` : ''}
     ${lu ? '<p class="small muted">Deine Notizen werden beim Hinzufügen ins Training übernommen.</p></div>' : `<p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
     <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>`}
@@ -439,12 +463,13 @@ function viewLibItem(e) {
 }
 function viewLibForm(id) {
   const c = id ? DB.custom.find(x => x.id === id) : null;
-  S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
+  S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, mat: '', desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
   const f = S.form;
   return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', 'Bibliothek · eigene Übungen', ctxBar()) + `<div class="card">
     <label>Name<input data-b="c:name" value="${esc(f.name)}"></label>
     <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
     <div class="chips">${R.stages.map(s => `<button class="chip ${f.stages.includes(s.id) ? 'sel' : ''}" data-a="cStage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
+    <label>🎒 Material<input data-b="c:mat" value="${esc(f.mat || '')}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
     <label>Beschreibung<textarea data-b="c:desc" rows="5">${esc(f.desc)}</textarea></label>
     <label>Keypoints<textarea data-b="c:coach" rows="2">${esc(f.coach)}</textarea></label>
     <label>Coachingfragen<textarea data-b="c:fragen" rows="2">${esc(f.fragen)}</textarea></label>
@@ -917,8 +942,12 @@ function onInput(ev) {
     const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
     touch(t); if (b === 'min') $('#sum').innerHTML = sumHtml(t);
+    if (k === 'i' && b === 'mat') {
+      if ($('#mat')) $('#mat').innerHTML = matCard(t, 'edit');
+      const key = matNoteKey(it); if (key) { const n = DB.notes[key] = DB.notes[key] || {}; n.mat = v; if (!n.desc && !n.goalie && !n.mat) delete DB.notes[key]; save(); }
+    }
   }
-  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie) delete DB.notes[key]; save(); }
+  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'f') { S.seed[a] = v; return; }
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
