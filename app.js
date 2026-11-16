@@ -789,3 +789,8 @@ document.addEventListener('change', ev => {
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
 render();
+// UTP-Links: Verbindung schon beim Berühren des Knopfs aufbauen, damit die Erklärung schneller aufgeht.
+document.addEventListener('pointerdown', ev => {
+  const a = ev.target.closest && ev.target.closest('a.utp'); if (!a) return;
+  const l = document.createElement('link'); l.rel = 'preconnect'; l.href = new URL(a.href).origin; document.head.appendChild(l); setTimeout(() => l.remove(), 15000);
+}, { passive: true });
