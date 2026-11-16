@@ -319,7 +319,7 @@ function itemCard(t, it, i) {
       ${explain(u, itemEx(it, t), 'e:' + it.id)}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
       <label>Beschreibung / Organisation<textarea data-b="i:${it.id}:desc" rows="3" placeholder="Ablauf, Feldgrösse, Material …">${esc(it.desc)}</textarea></label>
-      <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
+      <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it, t))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
       <label>Keypoints / Coachingfragen<textarea data-b="i:${it.id}:coach" rows="2">${esc(it.coach)}</textarea></label>
       <div class="gbox"><b>🧤 Goalie</b>
         <label>Rolle in diesem Block<select data-b="g:${it.id}:mode" data-r="1">${opt('team', 'Mit dem Team (im Tor / macht mit)', g.mode)}${opt('own', 'Eigene Goalie-Übung (parallel)', g.mode)}${opt('none', 'Nicht im Einsatz / Pause', g.mode)}</select></label>
@@ -353,19 +353,20 @@ function viewEdit(t) {
 }
 
 // ---------- Material (Kopfzeile des Trainings) ----------
+// Quellen (Vorrang in dieser Reihenfolge): Angabe des Trainers, Merkzettel der Übung, Daten (Goalie/eigene Übung), automatisch aus dem UTP-Text erkannt.
 // Quellen: Feld it.mat je Übung (vom Trainer, wird pro Bibliotheks-Übung in DB.notes[key].mat gemerkt und bei neuen Trainings vorbelegt), Material der Goalie-Übungen und eigener Übungen.
 const NOMAT = /^(keine?s?|kein material|[-–])$/i;
 const matParts = s => String(s || '').split(/[,;\n]+/).map(x => x.trim()).filter(x => x && !NOMAT.test(x));
-const matKey = x => norm(x.replace(/^\d+(?:\s*[–-]\s*\d+)?\s*(?:x\s*)?/i, ''));   // Mengen vorne ignorieren: «10 Bälle» = «Bälle»
+const matKey = x => norm(x.replace(/^\d+(?:\s*[–-]\s*\d+)?\s*(?:x\s*)?/i, '')).replace(/(en|e|n)$/, '');   // Mengen vorne und Mehrzahl-Endung ignorieren: «10 Bälle» = «Ball», «Tore» = «Tor»
 const matNoteKey = it => it.lib || (it.type !== 'athletik' && it.name && libGet(norm(it.name)) ? norm(it.name) : '');
-function itemMatTxt(it) {   // eigene Angabe hat Vorrang; sonst Merkzettel der Übung bzw. Daten der Übung
+function itemMatTxt(it, t) {   // eigene Angabe hat Vorrang; sonst Merkzettel der Übung bzw. Daten der Übung
   if (it.mat !== undefined) return it.mat;
   const k = matNoteKey(it), e = it.lib && libGet(it.lib);
-  return (k && note(k).mat) || (e && e.mat) || '';
+  return (k && note(k).mat) || (e && e.mat) || ((t && itemEx(it, t)) || {}).m || '';   // zuletzt: aus dem UTP-Text erkannt (build-utp.js)
 }
 function trainingMat(t) {
   const m = new Map(), add = x => { const k = matKey(x); if (!k) return; const old = m.get(k); if (!old || (/^\d/.test(x) && !/^\d/.test(old))) m.set(k, x); };
-  t.items.forEach(it => { matParts(itemMatTxt(it)).forEach(add); const g = it.g, x = g && g.mode === 'own' && g.name ? goalieEx(g.name) : null; if (x) matParts(x.mat).forEach(add); });
+  t.items.forEach(it => { matParts(itemMatTxt(it, t)).forEach(add); const g = it.g, x = g && g.mode === 'own' && g.name ? goalieEx(g.name) : null; if (x) matParts(x.mat).forEach(add); });
   return [...m.values()];
 }
 function matCard(t, mode) {
