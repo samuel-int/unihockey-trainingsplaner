@@ -113,6 +113,15 @@ function lib() {
 }
 const libGet = key => lib().find(e => e.key === key);
 const goalieEx = name => lib().find(e => e.kind === 'goalie' && e.name === name);
+// Link zur Übung im UTP (nur die Adresse aus dem RTP, keine Inhalte). Pro Stufe zuerst die Stufen-Adresse, sonst die allgemeine.
+function utpUrl(name, stage) {
+  const k = norm(name || ''); if (!k) return '';
+  const rel = ((R.linksBy || {})[stage] || {})[k] || (R.links || {})[k];
+  return rel ? (R.utpBase || 'https://utp.swissunihockey.ch/guest/exercises/') + rel : '';
+}
+const utpBtn = (url, cls = '') => `<a class="btn pri utp ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Erklärung im UTP ↗</a>`;
+const itemUtp = (it, t) => { const e = it.lib && libGet(it.lib); return utpUrl(e && e.src === 'rtp' ? e.name : it.name, t.stage); };
+const libStage = e => S.lib.stage && e.stages.has(S.lib.stage) ? S.lib.stage : e.stages.has(DB.stage) ? DB.stage : [...e.stages][0];
 const note = key => DB.notes[key] || {};
 
 function goalieFocus(type, sp, ef, stage) {
@@ -167,7 +176,7 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
 }
 function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
-  const nt = note(e.key);
+  const nt = note(e.key); it.lib = e.key;
   if (e.src === 'custom') { it.desc = [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'); it.coach = [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n'); }
   else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
   else if (e.src === 'rtp') it.desc = nt.desc || '';
@@ -238,19 +247,20 @@ function goalieSummary(g) {
 function itemCard(t, it, i) {
   const ty = TYPES[it.type] || TYPES.sonst, open = S.open.has(it.id), g = it.g || (it.g = { mode: 'team', name: '', text: '' });
   const gopts = lib().filter(e => e.kind === 'goalie');
-  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null;
+  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null, u = itemUtp(it, t);
   return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}">
     <div class="row"><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
       <input class="name" data-b="i:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">
       <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
     ${open ? `<div class="body">
+      ${u ? `<p>${utpBtn(u)} <span class="small muted">Beschreibung, Skizze und Video bei swiss unihockey</span></p>` : ''}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
       <label>Beschreibung / Organisation<textarea data-b="i:${it.id}:desc" rows="3" placeholder="Ablauf, Feldgrösse, Material …">${esc(it.desc)}</textarea></label>
       <label>Keypoints / Coachingfragen<textarea data-b="i:${it.id}:coach" rows="2">${esc(it.coach)}</textarea></label>
       <div class="gbox"><b>🧤 Goalie</b>
         <label>Rolle in diesem Block<select data-b="g:${it.id}:mode" data-r="1">${opt('team', 'Mit dem Team (im Tor / macht mit)', g.mode)}${opt('own', 'Eigene Goalie-Übung (parallel)', g.mode)}${opt('none', 'Nicht im Einsatz / Pause', g.mode)}</select></label>
         ${g.mode === 'own' ? `<label>Goalie-Übung<select data-b="g:${it.id}:name" data-r="1">${opt('', '– frei beschreiben –', g.name)}${gopts.map(e => opt(e.name, e.name + (e.stages.has(t.stage) ? '' : ' (andere Stufe)'), g.name)).join('')}</select></label>
-          ${gx ? `<p class="small">${esc(gx.desc || '')} <a href="#/lib/x/${encodeURIComponent(gx.key)}">mehr</a></p>` : ''}` : ''}
+          ${gx ? `<p class="small">${esc(gx.desc || '')} <a href="#/lib/x/${encodeURIComponent(gx.key)}">mehr</a></p>${gx.coach && gx.coach.length ? `<details class="small"><summary>Coaching-Punkte &amp; Variationen</summary><ul>${gx.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${gx.vari ? `<p><b>Variationen:</b> ${esc(gx.vari)}</p>` : ''}</details>` : ''}` : ''}` : ''}
         <label>${g.mode === 'own' ? 'Zusätzliche Hinweise' : 'Goalie-Fokus / Aufgabe'}<textarea data-b="g:${it.id}:text" rows="2">${esc(g.text)}</textarea></label></div>
       <div class="row acts"><button class="btn sm" data-a="mv" data-id="${it.id}" data-d="-1" ${i ? '' : 'disabled'}>↑</button><button class="btn sm" data-a="mv" data-id="${it.id}" data-d="1" ${i < t.items.length - 1 ? '' : 'disabled'}>↓</button>
         <button class="btn sm" data-a="dupI" data-id="${it.id}">Duplizieren</button><span class="grow"></span><button class="btn sm danger" data-a="delI" data-id="${it.id}">Entfernen</button></div>
@@ -302,7 +312,7 @@ function goalieHtml(g, full) {
   if (!g) return '';
   const x = g.mode === 'own' && g.name ? goalieEx(g.name) : null;
   const headTxt = g.mode === 'none' ? 'Nicht im Einsatz' : g.mode === 'own' ? (g.name || 'Eigene Übung') : 'Mit dem Team';
-  return `<div class="gbox"><b>🧤 ${esc(headTxt)}</b>${x && full ? `<p>${esc(x.desc)}</p><ul>${[].concat(x.coach || []).map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}${g.text ? `<p>${nl2br(g.text)}</p>` : ''}</div>`;
+  return `<div class="gbox"><b>🧤 ${esc(headTxt)}</b>${x && full ? `<p>${esc(x.desc)}</p><ul>${[].concat(x.coach || []).map(c => `<li>${esc(c)}</li>`).join('')}</ul>${x.vari ? `<p class="small"><b>Variationen:</b> ${esc(x.vari)}</p>` : ''}${x.mat ? `<p class="small muted">Material: ${esc(x.mat)}</p>` : ''}` : ''}${g.text ? `<p>${nl2br(g.text)}</p>` : ''}</div>`;
 }
 function viewRead(t) {
   let m = 0;
@@ -312,7 +322,7 @@ function viewRead(t) {
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
   ${rtpSummary(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
-    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
+    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${itemUtp(it, t) ? `<p>${utpBtn(itemUtp(it, t), 'sm')}</p>` : ''}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
 }
 
 // ---------- Ansicht: Hallenmodus ----------
@@ -329,7 +339,7 @@ function viewRun(t) {
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
-    ${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
+    ${itemUtp(it, t) ? `<div class="card">${utpBtn(itemUtp(it, t), 'block')}<p class="small muted center nomargin">Öffnet im Browser (Internet nötig)</p></div>` : ''}${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
     ${goalieHtml(it.g, true)}
     ${nx ? `<p class="muted center small">Als Nächstes: <b>${esc(nx.name || (TYPES[nx.type] || TYPES.sonst)[0])}</b> (${esc(nx.min)}′)</p>` : '<p class="muted center small">Letzter Block</p>'}
     <div class="row runnav"><button class="btn big" data-a="runGo" data-i="${r.i - 1}" ${r.i ? '' : 'disabled'}>‹ Zurück</button><button class="btn pri big" data-a="runGo" data-i="${r.i + 1}" ${nx ? '' : 'disabled'}>Weiter ›</button></div></div>`;
@@ -367,16 +377,16 @@ function usesHtml(e) {
   return Object.entries(by).map(([st, bs]) => `<div class="small">${esc(st)}: ${[...bs].sort((a, b) => a - b).map(b => `<a href="#/rtp/${st}/${b}">Block ${b}</a>`).join(', ')}</div>`).join('');
 }
 function viewLibItem(e) {
-  const ty = TYPES[e.kind] || TYPES.sonst, pt = S.pick && getT(S.pick), nt = note(e.key);
+  const ty = TYPES[e.kind] || TYPES.sonst, pt = S.pick && getT(S.pick), nt = note(e.key), lu = e.src === 'rtp' ? utpUrl(e.name, libStage(e)) : '';
   let body = '';
   if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div><p class="small muted">${esc(G.note)}</p>`;
   else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
     <div class="row"><a class="btn" href="#/lib/edit/${e.id}">Bearbeiten</a><button class="btn danger" data-a="delC" data-id="${e.id}">Löschen</button></div>`;
-  else body = `${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<p class="small"><b>${esc(p.st)}:</b> ${esc([p.whg, p.serien && p.serien + ' Serien', p.gewicht, p.rhythmus].filter(Boolean).join(' · '))}${p.keypoints ? `<br>Keypoints: ${esc(p.keypoints)}` : ''}</p>`).join('')}</div>` : ''}
+  else body = `${lu ? `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey (Unihockey-Trainingsplaner). Öffnet in einem neuen Tab, ohne Login; braucht Internet.</p></div>` : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<p class="small"><b>${esc(p.st)}:</b> ${esc([p.whg, p.serien && p.serien + ' Serien', p.gewicht, p.rhythmus].filter(Boolean).join(' · '))}${p.keypoints ? `<br>Keypoints: ${esc(p.keypoints)}` : ''}</p>`).join('')}</div>` : ''}
     <div class="card"><label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
     ${e.kind !== 'athletik' ? `<label>🧤 Goalie-Hinweis zu dieser Übung<textarea data-b="n:${esc(e.key)}:goalie" rows="2" placeholder="${esc(goalieFocus(e.kind, [...e.sps][0], [...e.efs][0]))}">${esc(nt.goalie)}</textarea></label>` : ''}
-    <p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
-    <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>
+    ${lu ? '<p class="small muted">Deine Notizen werden beim Hinzufügen ins Training übernommen.</p></div>' : `<p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
+    <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>`}
     ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
   return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : 'Bibliothek', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
     <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
