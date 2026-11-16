@@ -202,7 +202,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`) + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`) + rtpSummary(t, 'edit') + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Team<input data-b="t:team" list="teams" value="${esc(t.team)}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -221,6 +221,25 @@ function viewEdit(t) {
   <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><a class="btn" href="#/t/${t.id}/view">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
 }
 
+// ---------- RTP-Zusammenfassung (Erscheinungsform, Schwerpunkt, Ausbildungsziel, Regel-Fokus) ----------
+// Liest den Block zur Laufzeit aus dem gespeicherten Bezug t.rtp; ohne Bezug oder bei unbekannter Stufe/unbekanntem Block: null (keine Karte).
+function rtpBlockOf(t) {
+  const r = t && t.rtp; if (!r || typeof r !== 'object') return null;
+  const st = stageById(r.stage), b = st && (st.blocks || []).find(x => x.nr === +r.block);
+  return b && b.main ? b : null;
+}
+function rtpSummary(t, mode) {
+  const b = rtpBlockOf(t); if (!b) return '';
+  const m = b.main, sec = b.sec, regel = [].concat(b.regel || []).filter(Boolean);
+  const ziel = m.ziel ? `Die Spieler*innen können ${esc(String(m.ziel).replace(/^können /, ''))}` : '';
+  const secTxt = sec && [sec.sp, sec.ef].filter(Boolean).length ? [sec.sp, sec.ef].filter(Boolean).join(' · ') : '';
+  const inner = `${m.ef ? `<div class="small muted">Erscheinungsform</div><p class="rs-v">${esc(m.ef)}</p>` : ''}${m.sp ? `<div class="small muted">Schwerpunkt</div><p class="rs-v"><b>${esc(m.sp)}</b></p>` : ''}${ziel ? `<div class="small muted">Ausbildungsziel</div><p class="rs-v">${ziel}</p>` : ''}${regel.length ? `<div class="small muted">Regel-Fokus</div><p class="rs-v">${regel.map(esc).join(', ')}</p>` : ''}${secTxt ? `<p class="small muted rs-sec">Nebenschwerpunkt: ${esc(secTxt)}</p>` : ''}`;
+  if (!inner) return '';
+  const title = `<span class="dot" style="background:${efColor(m.ef)}"></span>Überblick: ${esc(m.sp || m.ef || 'RTP-Block')}`;
+  if (mode === 'edit') return `<details class="card rtpsum" ${S.sumClosed ? '' : 'open'}><summary>${title}</summary>${inner}</details>`;
+  return `<div class="card rtpsum"><b class="rs-h"><span class="dot" style="background:${efColor(m.ef)}"></span>Überblick RTP-Block ${esc(b.nr)}</b>${inner}</div>`;
+}
+
 // ---------- Ansicht: Übersicht (lesen/drucken) ----------
 function goalieHtml(g, full) {
   if (!g) return '';
@@ -234,6 +253,7 @@ function viewRead(t) {
   <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
     ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
+  ${rtpSummary(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
     <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
 }
@@ -248,6 +268,7 @@ function viewRun(t) {
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
   return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
+    ${r.i === 0 && !r.started ? rtpSummary(t) : ''}
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
@@ -556,11 +577,12 @@ const A = {
   sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); go(`/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
   sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
-  runTog() { const r = S.run; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
+  runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
   runReset() { runSet(curT(), S.run.i); render(); },
-  runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; runSet(t, i); render(); scrollTo(0, 0); },
+  runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); render(); scrollTo(0, 0); },
   runExit() { wakeLock(false); },
 };
+document.addEventListener('toggle', ev => { if (ev.target.classList && ev.target.classList.contains('rtpsum')) S.sumClosed = !ev.target.open; }, true);
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;
