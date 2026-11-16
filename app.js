@@ -1,0 +1,593 @@
+'use strict';
+/* Unihockey Trainingsplaner – offline-fähige Web-App ohne Login. Daten liegen lokal im Browser (localStorage). */
+const R = window.RTP, G = window.GOALIE;
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const stageById = id => R.stages.find(s => s.id === id);
+const nl2br = s => esc(s).replace(/\n/g, '<br>');
+
+// ---------- Speicher ----------
+const KEY = 'unihockey-planer.v1';
+const EMPTY = () => ({ v: 1, trainings: [], custom: [], notes: {}, season: {}, stage: 'D' });
+let DB = EMPTY();
+try { DB = Object.assign(EMPTY(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* leer starten */ }
+let saveT;
+const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
+const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); };
+addEventListener('pagehide', flush);
+
+const S = { open: new Set(), pick: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null };
+
+// ---------- Typen & Farben ----------
+const TYPES = {
+  warmup: ['Warm-up / Vielseitigkeit', '#2e9e6b', 10], athletik: ['Athletik', '#8e5bd0', 10], skills: ['Skills / Einschiessen', '#0a8fa8', 10],
+  gp: ['Good Practice', '#0a5fb4', 15], spiel: ['Spiel', '#d1495b', 20], goalie: ['Goalie-Übung', '#d9730d', 10], cooldown: ['Cool-Down / Ausklang', '#3f8f8f', 5], sonst: ['Sonstiges', '#6b7785', 10],
+};
+const slotType = l => /Athletik/.test(l) ? 'athletik' : /Warm-up|Vielseitigkeit/.test(l) ? 'warmup' : /Skills|Einschiessen/.test(l) ? 'skills' : /Good Practice/.test(l) ? 'gp' : /Spiel/.test(l) ? 'spiel' : 'sonst';
+const EFC = [[/offensive 1/, '#e0a100'], [/aufbau/, '#2e9e6b'], [/torchance/, '#d1495b'], [/defensive 1/, '#0a5fb4'], [/raume/, '#5b4bc4'], [/ballgewinn/, '#0a8fa8'], [/ballverlust/, '#c2571a']];
+const efColor = ef => (EFC.find(([re]) => re.test(norm(ef))) || [0, '#6b7785'])[1];
+
+// ---------- Datum ----------
+const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const pd = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const monday = d => addDays(d, -((d.getDay() + 6) % 7));
+const dm = d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+const fmtDate = s => { if (!s) return ''; const d = pd(s); return `${WD[d.getDay()]}, ${dm(d)}${d.getFullYear()}`; };
+
+// ---------- Bibliothek (aus RTP + Goalie + eigene Übungen) ----------
+let LIB = null;
+function lib() {
+  if (LIB) return LIB;
+  const m = new Map();
+  const add = (name, kind, st, b, sp, ef, w) => {
+    const k = norm(name); if (!k) return null;
+    let e = m.get(k);
+    if (!e) m.set(k, e = { key: k, name, kind, src: 'rtp', stages: new Set(), sps: new Set(), efs: new Set(), uses: new Set() });
+    e.stages.add(st.id); if (sp) e.sps.add(sp); if (ef) e.efs.add(ef);
+    if (b) e.uses.add(`${st.id}|${b.nr}|${w || ''}`);
+    return e;
+  };
+  for (const st of R.stages) for (const b of st.blocks) {
+    for (const w of b.weeks) for (const t of w.trainings) for (const s of st.slots) {
+      if (!t[s.key] || s.label === 'Athletik') continue;   // D-Jun.: Spalte "Athletik" enthält nur den Entwicklungsfaktor
+      add(t[s.key], slotType(s.label), st, b, b.main.sp, b.main.ef, w.w);
+    }
+    for (const p of [b.main, b.sec]) if (p) for (const n of p.gp || []) add(n, 'gp', st, b, p.sp, p.ef);
+    if (b.athletik) for (const se of b.athletik.sessions) for (const it of se.items) {
+      if (!it.form) continue;
+      const e = add(it.form, 'athletik', st, b); if (!e) continue;
+      e.faktoren = e.faktoren || new Set(); e.faktoren.add(se.faktor);
+      e.params = e.params || []; if (e.params.length < 6 && !e.params.some(p => p.st === st.id && p.whg === it.whg)) e.params.push({ st: st.id, ...it });
+    }
+  }
+  G.exercises.forEach(x => m.set('g:' + norm(x.name), { ...x, key: 'g:' + norm(x.name), kind: 'goalie', src: 'goalie', stages: new Set(x.stages), sps: new Set([G.cats[x.cat]]), efs: new Set(), uses: new Set() }));
+  DB.custom.forEach(x => m.set('c:' + x.id, { ...x, key: 'c:' + x.id, src: 'custom', stages: new Set(x.stages || []), sps: new Set(), efs: new Set(), uses: new Set() }));
+  return LIB = [...m.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+}
+const libGet = key => lib().find(e => e.key === key);
+const goalieEx = name => lib().find(e => e.kind === 'goalie' && e.name === name);
+const note = key => DB.notes[key] || {};
+
+function goalieFocus(type, sp, ef, stage) {
+  if ((stage === 'F' || stage === 'E') && type === 'spiel') return 'Goalie-Rotation: nach jedem Tor oder alle 2 Minuten wechseln – alle dürfen ins Tor.';
+  if (type === 'warmup' || type === 'athletik' || type === 'spiel') return G.slotFocus[type];
+  const s = `${sp || ''} ${ef || ''}`.toLowerCase();
+  return (G.focus.find(f => new RegExp(f.m).test(s)) || { t: G.slotFocus.gp }).t;
+}
+const athLine = it => `• ${it.form || 'Übung'}: ${[it.whg, it.serien && it.serien + ' Serien', it.gewicht, it.rhythmus].filter(Boolean).join(', ')}${it.keypoints ? ' — ' + it.keypoints : ''}`;
+function athSession(b, n, faktor) {
+  const ss = (b.athletik || {}).sessions || []; if (!ss.length) return null;
+  return ss.find(s => s.nums.includes(n) && (!faktor || s.faktor === faktor)) || ss.find(s => s.nums.includes(n)) || ss.find(s => s.faktor === faktor) || ss[(n - 1) % ss.length];
+}
+
+// ---------- Trainings ----------
+const mkItem = (type, name, min, extra) => ({ id: uid(), type, name: name || '', min: min ?? TYPES[type][2], desc: '', coach: '', g: { mode: 'team', name: '', text: '' }, ...extra });
+const getT = id => DB.trainings.find(t => t.id === id);
+const total = t => t.items.reduce((a, i) => a + (+i.min || 0), 0);
+const touch = t => { t.updated = Date.now(); save(); };
+function newTraining(p) {
+  const st = stageById(p.stage || DB.stage) || R.stages[2];
+  const t = { id: uid(), title: 'Neues Training', date: '', team: '', ort: '', start: '', stage: st.id, min: st.minutes, ef: '', sp: '', ziel: '', sec: '', notes: '', rtp: null, items: [], updated: Date.now(), ...p };
+  DB.trainings.push(t); save(); return t;
+}
+function pickGoalieEx(stage, n) {
+  const l = G.exercises.filter(x => x.stages.includes(stage) && x.cat !== 6); return l.length ? l[(n - 1) % l.length].name : '';
+}
+function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
+  const st = stageById(stageId), b = st.blocks.find(x => x.nr === blockNr), items = [];
+  const base = { stage: stageId, date: date || '', ef: b.main.ef, sp: b.main.sp, ziel: b.main.ziel, sec: b.sec ? [b.sec.sp || b.sec.ef, b.sec.ziel].filter(Boolean).join(': ') : '', rtp: { stage: stageId, block: blockNr, week: weekNr, idx } };
+  const gDef = (type, sp, ef, n) => type === 'skills' ? { mode: 'own', name: pickGoalieEx(stageId, n), text: '' } : { mode: 'team', name: '', text: goalieFocus(type, sp, ef, stageId) };
+  if (st.slots) {
+    const w = b.weeks.find(x => x.w === weekNr), tr = w.trainings[idx], n = b.weeks.indexOf(w) * st.perWeek + idx + 1;
+    for (const s of st.slots) {
+      const v = tr[s.key]; if (!v) continue;
+      const type = slotType(s.label), it = mkItem(type, v, s.min);
+      if (s.label === 'Athletik') { const se = athSession(b, n, v); it.name = 'Athletik: ' + v; it.desc = se ? se.items.map(athLine).join('\n') : ''; }
+      else { const nt = note(norm(v)); it.desc = nt.desc || ''; if (nt.goalie) it.gNote = nt.goalie; }
+      it.g = gDef(type, b.main.sp, b.main.ef, n); if (it.gNote) { it.g.text = it.gNote; delete it.gNote; }
+      items.push(it);
+    }
+    return newTraining({ ...base, items, title: `${st.id} · Block ${b.nr} · Woche ${weekNr}${st.perWeek > 1 ? ' · Training ' + (idx + 1) : ''}`, notes: b.regel.length ? 'Regel-Fokus: ' + b.regel.join(', ') : '' });
+  }
+  const n = idx + 1, se = athSession(b, n);
+  items.push({ ...mkItem('warmup', 'Warm-up', 10), g: gDef('warmup') });
+  items.push({ ...mkItem('athletik', 'Athletik' + (se ? ': ' + se.faktor : ''), 15), desc: se ? se.items.map(athLine).join('\n') : '', g: gDef('athletik') });
+  items.push({ ...mkItem('skills', 'Skills / Goalie-Einschiessen', 10), g: gDef('skills', '', '', n) });
+  const gp = (p, min) => p && items.push({ ...mkItem('gp', (p.gp && p.gp.length ? p.gp[(n - 1) % p.gp.length] : 'Good Practice: ' + (p.sp || p.ef)), min), desc: p.gp && p.gp.length ? '' : 'Trainingsform im UTP wählen (Bibliothek → Stufe und Schwerpunkt filtern).', g: gDef('gp', p.sp, p.ef) });
+  gp(b.main, 20); gp(b.sec, 15);
+  items.push({ ...mkItem('spiel', 'Spielform', b.sec ? 20 : 35), desc: 'Bonuspunkte/Feedback in Bezug auf den Hauptschwerpunkt.', g: gDef('spiel') });
+  return newTraining({ ...base, items, title: `${st.id} · Block ${b.nr} (${b.monat || b.phase}) · Training ${n}` });
+}
+function itemFromLib(e, t) {
+  const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
+  const nt = note(e.key);
+  if (e.src === 'custom') { it.desc = [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'); it.coach = [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n'); }
+  else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
+  else if (e.src === 'rtp') it.desc = nt.desc || '';
+  it.g = e.kind === 'goalie' ? { mode: 'own', name: e.src === 'goalie' ? e.name : '', text: e.src === 'custom' ? e.desc || '' : '' }
+    : { mode: 'team', name: '', text: nt.goalie || e.goalie || goalieFocus(type, [...e.sps][0] || t.sp, [...e.efs][0] || t.ef, t.stage) };
+  return it;
+}
+
+// ---------- UI-Helfer ----------
+function toast(msg, act, fn) { const el = $('#toast'); el.innerHTML = esc(msg) + (act ? ` <button data-a="toastAct">${esc(act)}</button>` : ''); toast.fn = fn; el.className = act ? 'on act' : 'on'; clearTimeout(toast.t); toast.t = setTimeout(() => el.className = '', act ? 7000 : 2400); }
+const teamsOf = () => [...new Set(DB.trainings.map(t => t.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
+const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
+function removeTrainings(list) {
+  if (!list.length) return; const ids = new Set(list.map(t => t.id));
+  DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); save();
+  toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); save(); render(); });
+}
+function modal(html) { $('#modal').innerHTML = `<div class="backdrop" data-a="close"></div><div class="sheet">${html}</div>`; $('#modal').className = 'on'; }
+function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; }
+const go = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
+const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
+const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
+const stageOpts = (sel, all) => (all ? opt('', 'Alle Stufen', sel) : '') + R.stages.map(s => opt(s.id, s.name, sel)).join('');
+const head = (title, back, right = '') => `<header class="top">${back ? `<a class="back" href="#${back}" aria-label="Zurück">‹</a>` : ''}<h1>${esc(title)}</h1>${right}</header>`;
+
+// ---------- Ansicht: Trainings ----------
+function viewHome() {
+  const today = iso(new Date()), teams = teamsOf(), f = teams.includes(S.team) ? S.team : '';
+  const ts = DB.trainings.filter(t => !f || t.team === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
+  S.visible = ts.map(t => t.id);
+  const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div>
+    <div class="muted small">${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}</div>
+    <div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div>`;
+  const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#/t/${t.id}">${inner(t)}</a>`; };
+  const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
+  const gtitle = g => { const t = g[0]; return [t.team, t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
+  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<button class="btn pri" data-a="newT">+ Neu</button>`) + (DB.trainings.length ? `
+    ${teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Teams</button>${teams.map(x => `<button class="chip ${f === x ? 'sel' : ''}" data-a="teamF" data-k="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
+    ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button></div>` : ''}
+    ${[...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('')}` : `
+    <div class="card empty"><h2>Willkommen 👋</h2><p>Plane Trainings nach den Rahmentrainingsplänen (RTP) von swiss unihockey – mit eigener Goalie-Spur, Hallenmodus und Saisonplanung. Alles bleibt auf deinem Gerät, ohne Login.</p>
+    <p><a class="btn pri" href="#/rtp">Training aus dem RTP erstellen</a></p><p><button class="btn" data-a="blankT">Leeres Training</button> <a class="btn" href="#/season">Saison planen</a></p></div>`);
+}
+
+// ---------- Ansicht: Editor ----------
+function goalieSummary(g) {
+  if (!g) return '';
+  if (g.mode === 'none') return 'nicht im Einsatz';
+  if (g.mode === 'own') return g.name || 'eigene Übung';
+  return 'mit dem Team' + (g.text ? ' – ' + g.text : '');
+}
+function itemCard(t, it, i) {
+  const ty = TYPES[it.type] || TYPES.sonst, open = S.open.has(it.id), g = it.g || (it.g = { mode: 'team', name: '', text: '' });
+  const gopts = lib().filter(e => e.kind === 'goalie');
+  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null;
+  return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}">
+    <div class="row"><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
+      <input class="name" data-b="i:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">
+      <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
+    ${open ? `<div class="body">
+      <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
+      <label>Beschreibung / Organisation<textarea data-b="i:${it.id}:desc" rows="3" placeholder="Ablauf, Feldgrösse, Material …">${esc(it.desc)}</textarea></label>
+      <label>Keypoints / Coachingfragen<textarea data-b="i:${it.id}:coach" rows="2">${esc(it.coach)}</textarea></label>
+      <div class="gbox"><b>🧤 Goalie</b>
+        <label>Rolle in diesem Block<select data-b="g:${it.id}:mode" data-r="1">${opt('team', 'Mit dem Team (im Tor / macht mit)', g.mode)}${opt('own', 'Eigene Goalie-Übung (parallel)', g.mode)}${opt('none', 'Nicht im Einsatz / Pause', g.mode)}</select></label>
+        ${g.mode === 'own' ? `<label>Goalie-Übung<select data-b="g:${it.id}:name" data-r="1">${opt('', '– frei beschreiben –', g.name)}${gopts.map(e => opt(e.name, e.name + (e.stages.has(t.stage) ? '' : ' (andere Stufe)'), g.name)).join('')}</select></label>
+          ${gx ? `<p class="small">${esc(gx.desc || '')} <a href="#/lib/x/${encodeURIComponent(gx.key)}">mehr</a></p>` : ''}` : ''}
+        <label>${g.mode === 'own' ? 'Zusätzliche Hinweise' : 'Goalie-Fokus / Aufgabe'}<textarea data-b="g:${it.id}:text" rows="2">${esc(g.text)}</textarea></label></div>
+      <div class="row acts"><button class="btn sm" data-a="mv" data-id="${it.id}" data-d="-1" ${i ? '' : 'disabled'}>↑</button><button class="btn sm" data-a="mv" data-id="${it.id}" data-d="1" ${i < t.items.length - 1 ? '' : 'disabled'}>↓</button>
+        <button class="btn sm" data-a="dupI" data-id="${it.id}">Duplizieren</button><span class="grow"></span><button class="btn sm danger" data-a="delI" data-id="${it.id}">Entfernen</button></div>
+    </div>` : `<div class="small gline" data-a="tog" data-id="${it.id}">${esc(ty[0])} · 🧤 ${esc(goalieSummary(g))}</div>`}</div>`;
+}
+const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
+function viewEdit(t) {
+  S.pick = null;
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`) + `
+  <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
+    <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
+      <label>Team<input data-b="t:team" list="teams" value="${esc(t.team)}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
+      <label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="t:min" value="${esc(t.min)}"></label></div>
+    <details ${t.sp || t.ziel ? '' : 'open'}><summary>${t.sp ? `<span class="dot" style="background:${efColor(t.ef)}"></span>${esc(t.sp)}` : 'Schwerpunkt &amp; Ziel'}</summary>
+      <label>Stufe<select data-b="t:stage">${stageOpts(t.stage)}</select></label>
+      <label>Erscheinungsform<select data-b="t:ef" data-r="1">${opt('', '–', t.ef)}${[...new Set([...R.efs.teta, t.ef].filter(Boolean))].map(e => opt(e, e, t.ef)).join('')}</select></label>
+      <label>Schwerpunkt<input data-b="t:sp" value="${esc(t.sp)}"></label>
+      <label>Ausbildungsziel: Die Spieler*innen können …<textarea data-b="t:ziel" rows="3">${esc(t.ziel)}</textarea></label>
+      <label>Nebenschwerpunkt<textarea data-b="t:sec" rows="2">${esc(t.sec)}</textarea></label>
+      <label>Notizen (Material, Regel-Fokus, Absenzen …)<textarea data-b="t:notes" rows="2">${esc(t.notes)}</textarea></label>
+      ${t.rtp ? `<p class="small"><a href="#/rtp/${t.rtp.stage}/${t.rtp.block}">→ RTP-Block ${t.rtp.block} ansehen</a></p>` : ''}</details></div>
+  <div class="row sum"><span id="sum">${sumHtml(t)}</span><span class="grow"></span><button class="btn sm" data-a="togAll">${t.items.every(i => S.open.has(i.id)) && t.items.length ? 'Alle zuklappen' : 'Alle aufklappen'}</button></div>
+  ${t.items.map((it, i) => itemCard(t, it, i)).join('') || '<p class="muted center">Noch keine Blöcke.</p>'}
+  <div class="row wrap"><button class="btn pri" data-a="pick">+ Aus Bibliothek</button><button class="btn" data-a="addI">+ Leerer Block</button><button class="btn gbtn" data-a="addG">+ Goalie-Übung</button></div>
+  <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><a class="btn" href="#/t/${t.id}/view">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
+}
+
+// ---------- Ansicht: Übersicht (lesen/drucken) ----------
+function goalieHtml(g, full) {
+  if (!g) return '';
+  const x = g.mode === 'own' && g.name ? goalieEx(g.name) : null;
+  const headTxt = g.mode === 'none' ? 'Nicht im Einsatz' : g.mode === 'own' ? (g.name || 'Eigene Übung') : 'Mit dem Team';
+  return `<div class="gbox"><b>🧤 ${esc(headTxt)}</b>${x && full ? `<p>${esc(x.desc)}</p><ul>${[].concat(x.coach || []).map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}${g.text ? `<p>${nl2br(g.text)}</p>` : ''}</div>`;
+}
+function viewRead(t) {
+  let m = 0;
+  return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`) + `
+  <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
+    ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
+    ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
+  ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
+    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
+}
+
+// ---------- Ansicht: Hallenmodus ----------
+let wake = null;
+const mmss = s => `${s < 0 ? '+' : ''}${Math.floor(Math.abs(s) / 60)}:${String(Math.floor(Math.abs(s)) % 60).padStart(2, '0')}`;
+function runSet(t, i) { const r = S.run; r.i = Math.max(0, Math.min(t.items.length - 1, i)); r.left = (+t.items[r.i].min || 0) * 60; r.last = Date.now(); r.buzz = false; }
+function viewRun(t) {
+  if (!t.items.length) return head('Hallenmodus', `/t/${t.id}`) + '<p class="muted center">Dieses Training hat noch keine Blöcke.</p>';
+  if (!S.run || S.run.id !== t.id) { S.run = { id: t.id, i: 0, on: false }; runSet(t, 0); }
+  const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
+  return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
+    <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
+    <h1 class="runname">${esc(it.name || ty[0])}</h1>
+    <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
+    <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
+    ${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
+    ${goalieHtml(it.g, true)}
+    ${nx ? `<p class="muted center small">Als Nächstes: <b>${esc(nx.name || (TYPES[nx.type] || TYPES.sonst)[0])}</b> (${esc(nx.min)}′)</p>` : '<p class="muted center small">Letzter Block</p>'}
+    <div class="row runnav"><button class="btn big" data-a="runGo" data-i="${r.i - 1}" ${r.i ? '' : 'disabled'}>‹ Zurück</button><button class="btn pri big" data-a="runGo" data-i="${r.i + 1}" ${nx ? '' : 'disabled'}>Weiter ›</button></div></div>`;
+}
+setInterval(() => {
+  const r = S.run; if (!r) return; const now = Date.now();
+  if (r.on) { r.left -= (now - r.last) / 1000; if (r.left <= 0 && !r.buzz) { r.buzz = true; navigator.vibrate && navigator.vibrate([300, 150, 300]); } }
+  r.last = now; const el = $('#clock'); if (el) { el.textContent = mmss(r.left); el.classList.toggle('over', r.left < 0); }
+}, 500);
+async function wakeLock(on) { try { if (on && navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); else if (wake) { wake.release(); wake = null; } } catch (e) { /* nicht unterstützt */ } }
+
+// ---------- Ansicht: Bibliothek ----------
+const KINDS = [['', 'Alle'], ['gp', 'Good Practice'], ['skills', 'Skills'], ['spiel', 'Spiel'], ['warmup', 'Warm-up'], ['athletik', 'Athletik'], ['goalie', '🧤 Goalie'], ['custom', 'Eigene']];
+function libFiltered() {
+  const f = S.lib, q = norm(f.q);
+  return lib().filter(e => (!f.kind || (f.kind === 'custom' ? e.src === 'custom' : e.kind === f.kind)) && (!f.stage || e.stages.has(f.stage) || !e.stages.size) && (!f.sp || e.sps.has(f.sp)) && (!q || norm(e.name).includes(q) || [...e.sps].some(s => norm(s).includes(q))));
+}
+function libList() {
+  const l = libFiltered(), f = S.lib;
+  return `<p class="muted small">${l.length} Übungen</p>` + l.slice(0, f.limit).map(e => { const ty = TYPES[e.kind] || TYPES.sonst; return `<a class="card lcard" style="--c:${ty[1]}" href="#/lib/x/${encodeURIComponent(e.key)}"><b>${esc(e.name)}</b>
+    <div class="small muted">${esc(ty[0])}${e.src === 'custom' ? ' · eigene' : ''} · ${[...e.stages].join(', ') || 'alle Stufen'}${e.sps.size ? ' · ' + esc([...e.sps].slice(0, 2).join(', ')) : ''}</div></a>`; }).join('') +
+    (l.length > f.limit ? `<button class="btn block" data-a="libMore">Mehr anzeigen</button>` : '');
+}
+function viewLib() {
+  const f = S.lib, pt = S.pick && getT(S.pick);
+  const sps = [...new Set(lib().filter(e => (!f.stage || e.stages.has(f.stage)) && (!f.kind || e.kind === f.kind)).flatMap(e => [...e.sps]))].sort((a, b) => a.localeCompare(b, 'de'));
+  return head('Bibliothek', pt ? `/t/${pt.id}` : null, `<a class="btn" href="#/lib/new">+ Eigene</a>`) + `
+  ${pt ? `<div class="card pickbar">Übung wählen für <b>${esc(pt.title)}</b></div>` : ''}
+  <input type="search" id="q" data-b="l:q" value="${esc(f.q)}" placeholder="Übung suchen …">
+  <div class="chips">${KINDS.map(([k, l]) => `<button class="chip ${f.kind === k ? 'sel' : ''}" data-a="libKind" data-k="${k}">${l}</button>`).join('')}</div>
+  <div class="grid2"><select data-b="l:stage" data-r="1">${stageOpts(f.stage, true)}</select><select data-b="l:sp" data-r="1">${opt('', 'Alle Schwerpunkte', f.sp)}${sps.map(s => opt(s, s, f.sp)).join('')}</select></div>
+  <div id="liblist">${libList()}</div>`;
+}
+function usesHtml(e) {
+  const by = {}; for (const u of e.uses) { const [st, b] = u.split('|'); (by[st] = by[st] || new Set()).add(+b); }
+  return Object.entries(by).map(([st, bs]) => `<div class="small">${esc(st)}: ${[...bs].sort((a, b) => a - b).map(b => `<a href="#/rtp/${st}/${b}">Block ${b}</a>`).join(', ')}</div>`).join('');
+}
+function viewLibItem(e) {
+  const ty = TYPES[e.kind] || TYPES.sonst, pt = S.pick && getT(S.pick), nt = note(e.key);
+  let body = '';
+  if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div><p class="small muted">${esc(G.note)}</p>`;
+  else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
+    <div class="row"><a class="btn" href="#/lib/edit/${e.id}">Bearbeiten</a><button class="btn danger" data-a="delC" data-id="${e.id}">Löschen</button></div>`;
+  else body = `${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<p class="small"><b>${esc(p.st)}:</b> ${esc([p.whg, p.serien && p.serien + ' Serien', p.gewicht, p.rhythmus].filter(Boolean).join(' · '))}${p.keypoints ? `<br>Keypoints: ${esc(p.keypoints)}` : ''}</p>`).join('')}</div>` : ''}
+    <div class="card"><label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
+    ${e.kind !== 'athletik' ? `<label>🧤 Goalie-Hinweis zu dieser Übung<textarea data-b="n:${esc(e.key)}:goalie" rows="2" placeholder="${esc(goalieFocus(e.kind, [...e.sps][0], [...e.efs][0]))}">${esc(nt.goalie)}</textarea></label>` : ''}
+    <p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
+    <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>
+    ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
+  return head('Übung', '/lib') + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
+    <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
+    ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}</div>${body}
+    <button class="btn pri block" data-a="addLib" data-k="${esc(e.key)}">${pt ? `Zu «${esc(pt.title)}» hinzufügen` : 'Zu einem Training hinzufügen'}</button>`;
+}
+function viewLibForm(id) {
+  const c = id ? DB.custom.find(x => x.id === id) : null;
+  S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
+  const f = S.form;
+  return head(c ? 'Übung bearbeiten' : 'Eigene Übung', '/lib') + `<div class="card">
+    <label>Name<input data-b="c:name" value="${esc(f.name)}"></label>
+    <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
+    <div class="chips">${R.stages.map(s => `<button class="chip ${f.stages.includes(s.id) ? 'sel' : ''}" data-a="cStage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
+    <label>Beschreibung<textarea data-b="c:desc" rows="5">${esc(f.desc)}</textarea></label>
+    <label>Keypoints<textarea data-b="c:coach" rows="2">${esc(f.coach)}</textarea></label>
+    <label>Coachingfragen<textarea data-b="c:fragen" rows="2">${esc(f.fragen)}</textarea></label>
+    <details><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="c:leichter" rows="2">${esc(f.leichter)}</textarea></label><label>Erschweren<textarea data-b="c:schwerer" rows="2">${esc(f.schwerer)}</textarea></label><label>Variieren<textarea data-b="c:vari" rows="2">${esc(f.vari)}</textarea></label></details>
+    <label>🧤 Goalie-Hinweis<textarea data-b="c:goalie" rows="2">${esc(f.goalie)}</textarea></label>
+    <button class="btn pri block" data-a="saveC">Speichern</button></div>`;
+}
+
+// ---------- Ansicht: RTP ----------
+function viewRtp() {
+  const st = stageById(DB.stage) || R.stages[0], gc = G.curriculum[st.id];
+  return head('Rahmentrainingsplan') + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
+  <div class="card"><h2 class="nomargin">${esc(st.name)}${st.draft ? ' <span class="chip">Arbeitsstand</span>' : ''}</h2><p class="muted small">${esc(st.annahme)}</p>
+    <details><summary>Hinweise zum RTP</summary><ul class="small">${R.hints.map(h => `<li>${esc(h)}</li>`).join('')}</ul>
+      ${st.notes.map(n => `<b>${esc(n.title)}</b>${n.text.map(x => `<p class="small">${esc(x)}</p>`).join('')}`).join('')}
+      <b>Termine &amp; Abkürzungen</b><ul class="small">${Object.entries(R.glossary).map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>
+    <details><summary>Farbskala Erscheinungsformen</summary>${R.efs.teta.map(e => `<div class="small"><span class="dot" style="background:${efColor(e)}"></span>${esc(e)}</div>`).join('')}<p class="small muted">Athletik: ${R.efs.athletik.map(esc).join(' · ')}</p></details></div>
+  <div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul><p class="small muted">${esc(G.note)}</p></div>
+  <h2>Trainingsblöcke</h2>${st.blocks.map(b => `<a class="card item" style="--c:${efColor(b.main.ef)}" href="#/rtp/${st.id}/${b.nr}"><div class="row"><b>Block ${b.nr} · ${esc(b.main.sp || b.main.ef)}</b><span class="muted small nowrap">${esc(b.monat || b.phase)}</span></div>
+    <div class="small muted">${esc(b.main.sp ? b.main.ef : b.main.ziel)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}${b.sec && b.sec.sp ? ` · Neben: ${esc(b.sec.sp)}` : ''}</div></a>`).join('')}`;
+}
+function viewBlock(st, b) {
+  const part = (p, title) => p ? `<div class="card item" style="--c:${efColor(p.ef)}"><div class="small muted">${title} · ${esc(p.ef)}</div>${p.sp ? `<h2 class="nomargin">${esc(p.sp)}</h2>` : ''}
+    <p>${p.sp ? 'Die Spieler*innen können ' : ''}${esc(p.ziel.replace(/^können /, ''))}</p>
+    ${p.sp ? `<div class="gbox"><b>🧤 Goalie-Fokus</b><p>${esc(goalieFocus('gp', p.sp, p.ef, st.id))}</p></div>` : ''}
+    ${p.gp && p.gp.length ? `<b>Good Practice</b><div class="chips">${p.gp.map(n => `<a class="chip" href="#/lib/x/${encodeURIComponent(norm(n))}">${esc(n)}</a>`).join('')}</div>` : ''}</div>` : '';
+  const ev = [...b.events, ...b.weeks.flatMap(w => w.events.map(e => `W${w.w}: ${e}`))];
+  const weeks = st.slots ? b.weeks.map(w => `<h3>Woche ${w.w}${w.events.length ? ` <span class="muted small">· ${esc(w.events.join(', '))}</span>` : ''}</h3>${w.trainings.map((t, i) => `<div class="card"><div class="row"><b>Training ${i + 1}</b><button class="btn sm pri" data-a="fromRtp" data-s="${st.id}" data-b2="${b.nr}" data-w="${w.w}" data-i="${i}">Übernehmen</button></div>
+      ${st.slots.map(s => t[s.key] ? `<div class="slot"><span class="dot" style="background:${TYPES[slotType(s.label)][1]}"></span><span class="muted small">${esc(s.label)} (${esc(s.dur)})</span><br>${s.label === 'Athletik' ? esc(t[s.key]) : `<a href="#/lib/x/${encodeURIComponent(norm(t[s.key]))}">${esc(t[s.key])}</a>`}</div>` : '').join('')}</div>`).join('')}`).join('')
+    : `<div class="card"><b>Training erstellen</b><p class="small muted">Für diese Stufe gibt der RTP Schwerpunkte und Athletik vor, aber keine einzelnen Trainings. Wähle die Trainingsnummer im Block – die App baut eine Vorlage mit passender Athletik-Einheit.</p>
+      <div class="chips">${Array.from({ length: 12 }, (_, i) => `<button class="chip" data-a="fromRtp" data-s="${st.id}" data-b2="${b.nr}" data-w="0" data-i="${i}">${i + 1}</button>`).join('')}</div></div>`;
+  const ath = b.athletik ? `<h2>Athletik</h2><div class="card">${b.athletik.ziele.map(z => `<p class="small">${z.faktor ? `<b>${esc(z.faktor)}:</b> ` : '<b>Ziel:</b> '}${esc(z.text)}</p>`).join('')}</div>
+    ${b.athletik.sessions.map(s => `<details class="card"><summary><b>${esc(s.faktor)}</b> <span class="muted small">Woche ${esc(s.woche)} · Training ${esc(s.training)}</span></summary>
+      ${s.items.map(it => `<div class="slot"><b>${it.form ? `<a href="#/lib/x/${encodeURIComponent(norm(it.form))}">${esc(it.form)}</a>` : 'Übung'}</b><div class="small">${esc([it.whg, it.serien && it.serien + ' Serien', it.gewicht, it.rhythmus].filter(Boolean).join(' · '))}</div>${it.keypoints ? `<div class="small muted">${esc(it.keypoints)}</div>` : ''}</div>`).join('')}</details>`).join('')}` : '';
+  return head(`${st.id} · Block ${b.nr}`, '/rtp') + `<p class="muted small center">${esc(b.monat || b.phase)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}</p>
+    ${part(b.main, 'Hauptschwerpunkt')}${part(b.sec, 'Nebenschwerpunkt')}
+    ${ev.length || b.regel.length ? `<div class="card">${ev.length ? `<b>Termine / Events</b><div class="chips">${ev.map(e => chip(e)).join('')}</div>` : ''}${b.regel.length ? `<p class="small"><b>Regel-Fokus:</b> ${esc(b.regel.join(', '))}</p>` : ''}</div>` : ''}
+    <h2>Trainings</h2><button class="btn block" data-a="blockAll" data-s="${st.id}" data-b2="${b.nr}">Ganzen Block übernehmen (${st.slots ? b.weeks.reduce((a, w) => a + w.trainings.length, 0) : 12} Trainings)</button>${weeks}${ath}`;
+}
+
+// ---------- Ansicht: Saison ----------
+function seasonCfg() {
+  const s = DB.season;
+  if (!s.start) { const n = new Date(), y = n.getMonth() >= 4 ? n.getFullYear() : n.getFullYear() - 1; let d = new Date(y, 4, 1); while (d.getDay() !== 1) d = addDays(d, 1); s.start = iso(d); }
+  s.stage = s.stage || DB.stage; s.days = s.days || [2, 4]; s.hol = s.hol || [];
+  return s;
+}
+function seasonWeeks() {
+  const s = seasonCfg(), st = stageById(s.stage), out = [], days = [...s.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  const flat = st.slots ? st.blocks.flatMap(b => b.weeks.map(w => ({ b, w }))) : null;
+  let mon = monday(pd(s.start)), k = 0, cnt = {}, lastB = null;
+  for (let i = 0; i < 60; i++, mon = addDays(mon, 7)) {
+    const key = iso(mon), hol = s.hol.includes(key), row = { key, mon, hol, days: [] };
+    if (flat) { if (k >= flat.length) break; if (!hol) { row.b = flat[k].b; row.w = flat[k].w; k++; } }
+    else { const mid = addDays(mon, 3); if (i > 8 && mid.getMonth() === 3) break; row.b = st.blocks.find(b => b.monat === MONTHS[mid.getMonth()]); if (!row.b && !hol) row.pause = true; }
+    if (!hol && row.b) days.forEach((wd, di) => {
+      const d = addDays(mon, (wd + 6) % 7); let idx = di;
+      if (!flat) { cnt[row.b.nr] = (cnt[row.b.nr] || 0) + 1; idx = (cnt[row.b.nr] - 1) % 12; }
+      row.days.push({ date: iso(d), wd, idx });
+    });
+    row.first = !!(row.b && row.b !== lastB && !hol); row.ev = row.w ? row.w.events : (row.first ? row.b.events : []); if (row.b && !hol) lastB = row.b;
+    out.push(row);
+  }
+  return out;
+}
+function viewSeason() {
+  const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date()));
+  const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!s.team || t.team === s.team)) (byDate[t.date] = byDate[t.date] || []).push(t); });
+  return head('Saisonplanung') + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
+    <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Start (RTP-Woche 1)<input type="date" data-b="s:start" data-r="1" value="${esc(s.start)}"></label></div>
+    <div class="grid2"><label>Team<input data-b="s:team" list="teams" value="${esc(s.team || '')}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label></div>
+    <div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
+    <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'}</p></details>
+  ${seasonWeeks().map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
+    <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? chip('diese Woche') : ''}</span><button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button></div>
+    ${r.hol ? '' : r.b ? `<div class="small"><a href="#/rtp/${st.id}/${r.b.nr}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>
+      ${r.first ? `<button class="btn sm" data-a="sBlock" data-k="${r.b.nr}">Ganzen Block ${r.b.nr} planen</button>` : ''}${r.ev.length ? `<div class="chips">${r.ev.map(e => chip('📌 ' + e)).join('')}</div>` : ''}
+      <div class="chips">${r.days.map(d => (byDate[d.date] || []).length ? byDate[d.date].map(t => `<a class="chip sel" href="#/t/${t.id}">${WD[d.wd]} ${dm(pd(d.date))} ✓</a>`).join('') : `<button class="chip" data-a="sNew" data-s="${st.id}" data-b2="${r.b.nr}" data-w="${r.w ? r.w.w : 0}" data-i="${d.idx}" data-d="${d.date}">+ ${WD[d.wd]} ${dm(pd(d.date))}</button>`).join('')}</div>` : '<div class="small muted">Saisonpause / frei</div>'}</div>`).join('')}`;
+}
+
+function seasonCreate(st, b, w, idx, date) {
+  const s = seasonCfg();
+  const t = st.slots && !(w && w.trainings[idx]) ? newTraining({ stage: st.id, date, ef: b.main.ef, sp: b.main.sp, ziel: b.main.ziel, rtp: { stage: st.id, block: b.nr, week: w ? w.w : 0, idx }, title: `${st.id} · Block ${b.nr} · Zusatztraining` })
+    : trainingFromRtp(st.id, b.nr, w ? w.w : 0, idx, date);
+  t.team = s.team || ''; t.start = s.time || ''; save(); return t;
+}
+
+// ---------- Ansicht: Mehr ----------
+let installEvt = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); });
+function viewMore() {
+  return head('Mehr') + `
+  <div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">Einzelne Trainings teilst du im Training über «Teilen» (Link, QR-Code oder Datei). Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.</p>
+    <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>
+  <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
+    <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
+  <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist nur auf diesem Gerät gespeichert.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
+  <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">${esc(G.note)}</p></div>`;
+}
+
+// ---------- Teilen / Import ----------
+const b64u = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function pack(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  if (!window.CompressionStream) return 'p' + b64u(bytes);
+  const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return 'z' + b64u(new Uint8Array(await new Response(cs).arrayBuffer()));
+}
+async function unpack(s) {
+  let bytes = unb64u(s.slice(1));
+  if (s[0] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+const slim = t => { const c = JSON.parse(JSON.stringify(t)); c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };
+const download = (name, obj) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj)], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
+const appUrl = () => location.origin + location.pathname;
+async function shareTraining(t) {
+  const url = appUrl() + '#i=' + await pack({ v: 1, t: [slim(t)] });
+  let qr = '';
+  try { const q = qrcode(0, 'L'); q.addData(url, 'Byte'); q.make(); qr = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch (e) { qr = '<p class="small muted">Für einen QR-Code ist dieses Training zu umfangreich – nutze den Link oder die Datei.</p>'; }
+  S.share = { url, t };
+  modal(`<h2>«${esc(t.title)}» teilen</h2><p class="small">Die Empfängerin öffnet den Link oder scannt den Code – das Training wird in ihre App importiert. Es findet keine laufende Synchronisation statt; bei Änderungen einfach nochmals teilen.</p>
+    <div class="qr">${qr}</div><div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
+}
+function importData(d) {
+  if (!d || !Array.isArray(d.t)) { toast('Keine gültigen Trainingsdaten'); return; }
+  S.imp = d;
+  const dup = d.t.filter(t => getT(t.id)).length;
+  modal(`<h2>Importieren?</h2><ul>${d.t.slice(0, 12).map(t => `<li>${esc(t.title)}${t.date ? ` <span class="muted small">${fmtDate(t.date)}</span>` : ''}</li>`).join('')}${d.t.length > 12 ? `<li>… und ${d.t.length - 12} weitere</li>` : ''}</ul>
+    ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
+    <div class="row"><button class="btn pri" data-a="impOk">Importieren</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+}
+function doImport() {
+  const d = S.imp; S.imp = null;
+  for (const t of d.t) { if (!t.id || !Array.isArray(t.items)) continue; const i = DB.trainings.findIndex(x => x.id === t.id); if (i >= 0) DB.trainings[i] = t; else DB.trainings.push(t); }
+  for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
+  if (d.n) DB.notes = { ...d.n, ...DB.notes };
+  LIB = null; flush(); closeModal(); toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
+}
+
+// ---------- Router ----------
+const NAV = [['/', 'Trainings', '📋'], ['/lib', 'Bibliothek', '📚'], ['/rtp', 'RTP', '🗺️'], ['/season', 'Saison', '📅'], ['/more', 'Mehr', '⋯']];
+function render() {
+  const h = location.hash.slice(1) || '/';
+  if (h.startsWith('i=')) { unpack(h.slice(2)).then(importData).catch(() => toast('Link konnte nicht gelesen werden')); history.replaceState(null, '', location.pathname + '#/'); return render(); }
+  const p = h.split('/').filter(Boolean).map(decodeURIComponent);
+  let html = '', tab = '/' + (p[0] || ''), run = false;
+  if (!p.length) html = viewHome();
+  else if (p[0] === 't') {
+    const t = getT(p[1]); tab = '/';
+    if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
+    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else html = viewEdit(t);
+  } else if (p[0] === 'lib') {
+    if (p[1] === 'new') html = viewLibForm(); else if (p[1] === 'edit') html = viewLibForm(p[2]);
+    else if (p[1] === 'x') { const e = libGet(p.slice(2).join('/')); html = e ? viewLibItem(e) : head('Übung', '/lib') + '<p class="muted center">Übung nicht gefunden.</p>'; }
+    else html = viewLib();
+  } else if (p[0] === 'rtp') {
+    const st = stageById(p[1]), b = st && st.blocks.find(x => x.nr === +p[2]);
+    html = b ? viewBlock(st, b) : viewRtp();
+  } else if (p[0] === 'season') html = viewSeason();
+  else if (p[0] === 'more') html = viewMore();
+  else html = viewHome();
+  if (!run && S.run) { S.run = null; wakeLock(false); }
+  document.body.classList.toggle('running', run);
+  $('#app').innerHTML = html;
+  $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}"><span>${i}</span>${l}</a>`).join('');
+  if (render.last !== h.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
+  render.last = h.split('/').slice(0, 3).join('/');
+  if (p[0] === 'season' && !render.seasonScrolled) { const el = $('.week.now'); if (el) { el.scrollIntoView({ block: 'center' }); render.seasonScrolled = true; } }
+}
+addEventListener('hashchange', render);
+
+// ---------- Aktionen ----------
+const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
+const A = {
+  close: closeModal,
+  newT() { modal(`<h2>Neues Training</h2><div class="col"><a class="btn pri" href="#/rtp" data-a="close">Aus dem RTP übernehmen</a><a class="btn" href="#/season" data-a="close">Über die Saisonplanung</a><button class="btn" data-a="blankT">Leeres Training</button></div>`); },
+  blankT() { closeModal(); const t = newTraining({}); go(`/t/${t.id}`); },
+  tog(el) { const id = el.dataset.id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); render(); },
+  togAll() { const t = curT(), all = t.items.every(i => S.open.has(i.id)); t.items.forEach(i => all ? S.open.delete(i.id) : S.open.add(i.id)); render(); },
+  mv(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= t.items.length) return; [t.items[i], t.items[j]] = [t.items[j], t.items[i]]; touch(t); render(); },
+  delI(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), it = t.items.splice(i, 1)[0]; touch(t); render(); toast('Block entfernt', 'Rückgängig', () => { t.items.splice(i, 0, it); touch(t); render(); }); },
+  dupI(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id); t.items.splice(i + 1, 0, { ...JSON.parse(JSON.stringify(t.items[i])), id: uid() }); touch(t); render(); },
+  addI() { const t = curT(), it = mkItem('gp', '', 15); it.g.text = goalieFocus('gp', t.sp, t.ef, t.stage); t.items.push(it); S.open.add(it.id); touch(t); render(); },
+  addG() { const t = curT(); S.pick = t.id; S.lib.kind = 'goalie'; S.lib.stage = t.stage; S.lib.sp = ''; go('/lib'); },
+  pick() { const t = curT(); S.pick = t.id; S.lib.stage = t.stage; if (S.lib.kind === 'goalie') S.lib.kind = ''; go('/lib'); },
+  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
+  delT() { const t = curT(); removeTrainings([t]); go('/'); },
+  toastAct() { const fn = toast.fn; toast.fn = null; $('#toast').className = ''; fn && fn(); },
+  teamF(el) { S.team = el.dataset.k; render(); },
+  selMode() { S.sel = S.sel ? null : new Set(); render(); },
+  selT(el) { const id = el.dataset.id; S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); render(); },
+  selAll() { const all = S.visible.every(id => S.sel.has(id)); S.sel = new Set(all ? [] : S.visible); render(); },
+  delSel() { removeTrainings(DB.trainings.filter(t => S.sel.has(t.id))); S.sel = null; render(); },
+  grp(el) {
+    const k = el.dataset.k, g = DB.trainings.filter(t => grpKey(t) === k), dated = g.some(t => t.date);
+    modal(`<h2>${g.length} Training${g.length > 1 ? 's' : ''}</h2><div class="col">${dated ? `<button class="btn" data-a="grpShift" data-k="${esc(k)}" data-d="7">Alle eine Woche später</button><button class="btn" data-a="grpShift" data-k="${esc(k)}" data-d="-7">Alle eine Woche früher</button>` : ''}
+      <button class="btn" data-a="grpSel" data-k="${esc(k)}">Alle auswählen</button><button class="btn danger" data-a="grpDel" data-k="${esc(k)}">Ganzen Block löschen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  grpDel(el) { closeModal(); removeTrainings(DB.trainings.filter(t => grpKey(t) === el.dataset.k)); render(); },
+  grpSel(el) { closeModal(); S.sel = new Set(DB.trainings.filter(t => grpKey(t) === el.dataset.k).map(t => t.id)); render(); },
+  grpShift(el) { closeModal(); DB.trainings.forEach(t => { if (grpKey(t) === el.dataset.k && t.date) t.date = iso(addDays(pd(t.date), +el.dataset.d)); }); save(); toast('Verschoben'); render(); },
+  blockAll(el) {
+    const st = stageById(el.dataset.s), b = st.blocks.find(x => x.nr === +el.dataset.b2); let n = 0;
+    if (st.slots) b.weeks.forEach(w => w.trainings.forEach((_, i) => { trainingFromRtp(st.id, b.nr, w.w, i); n++; })); else for (let i = 0; i < 12; i++, n++) trainingFromRtp(st.id, b.nr, 0, i);
+    toast(`${n} Trainings erstellt`); go('/');
+  },
+  sBlock(el) {
+    const s = seasonCfg(), have = new Set(DB.trainings.filter(t => !s.team || t.team === s.team).map(t => t.date)); let n = 0;
+    seasonWeeks().forEach(r => { if (r.b && r.b.nr === +el.dataset.k) r.days.forEach(d => { if (!have.has(d.date)) { seasonCreate(stageById(s.stage), r.b, r.w, d.idx, d.date); n++; } }); });
+    toast(n ? `${n} Trainings geplant` : 'Alle Trainings dieses Blocks sind schon geplant'); render();
+  },
+  share() { shareTraining(curT()); },
+  print() { print(); },
+  shNative() { const { url, t } = S.share; if (navigator.share) navigator.share({ title: t.title, text: 'Unihockey-Training: ' + t.title, url }).catch(() => { }); else A.shCopy(); },
+  shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
+  shFile() { download(`training-${norm(S.share.t.title).replace(/ /g, '-')}.json`, { v: 1, t: [S.share.t] }); },
+  shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
+  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes }); },
+  impFile() { $('#file').click(); },
+  impOk: doImport,
+  install() { installEvt && installEvt.prompt(); installEvt = null; },
+  wipe() { if (confirm('Wirklich ALLE Trainings, eigenen Übungen und Notizen auf diesem Gerät löschen?')) { DB = EMPTY(); LIB = null; flush(); render(); } },
+  libKind(el) { S.lib.kind = el.dataset.k; S.lib.sp = ''; S.lib.limit = 60; render(); },
+  libMore() { S.lib.limit += 100; $('#liblist').innerHTML = libList(); },
+  utp(el) { navigator.clipboard && navigator.clipboard.writeText(el.dataset.n).then(() => toast('Name kopiert'), () => { }); open('https://utp.swissunihockey.ch', '_blank', 'noopener'); },
+  addLib(el) {
+    const e = libGet(el.dataset.k), add = t => { const it = itemFromLib(e, t); t.items.push(it); touch(t); toast('Hinzugefügt'); closeModal(); S.pick = null; go(`/t/${t.id}`); };
+    if (el.dataset.t) return add(el.dataset.t === 'new' ? newTraining({}) : getT(el.dataset.t));
+    if (S.pick && getT(S.pick)) return add(getT(S.pick));
+    const ts = [...DB.trainings].sort((a, b) => b.updated - a.updated).slice(0, 8);
+    modal(`<h2>Zu welchem Training?</h2><div class="col">${ts.map(t => `<button class="btn" data-a="addLib" data-k="${esc(e.key)}" data-t="${t.id}">${esc(t.title)}${t.date ? ' · ' + fmtDate(t.date) : ''}</button>`).join('')}<button class="btn pri" data-a="addLib" data-k="${esc(e.key)}" data-t="new">+ Neues Training</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  cStage(el) { const f = S.form, k = el.dataset.k; f.stages = f.stages.includes(k) ? f.stages.filter(x => x !== k) : [...f.stages, k]; el.classList.toggle('sel'); },
+  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) Object.assign(DB.custom.find(x => x.id === f.id), f); else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
+  delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
+  stage(el) { DB.stage = el.dataset.k; save(); render(); },
+  fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); toast('Training erstellt'); go(`/t/${t.id}`); },
+  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); go(`/t/${t.id}`); },
+  sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
+  sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
+  runTog() { const r = S.run; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
+  runReset() { runSet(curT(), S.run.i); render(); },
+  runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; runSet(t, i); render(); scrollTo(0, 0); },
+  runExit() { wakeLock(false); },
+};
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-a]'); if (!el) return;
+  const fn = A[el.dataset.a]; if (!fn) return;
+  if (el.tagName !== 'A') ev.preventDefault();
+  fn(el, ev);
+});
+function onInput(ev) {
+  const el = ev.target.closest('[data-b]'); if (!el) return;
+  const [k, a, b] = el.dataset.b.split(':'), v = el.type === 'number' ? (el.value === '' ? '' : +el.value) : el.value;
+  const rer = el.dataset.r && ev.type === 'change';
+  if (k === 't') { const t = curT(); t[a] = v; touch(t); if (a === 'min') $('#sum').innerHTML = sumHtml(t); }
+  else if (k === 'i' || k === 'g') {
+    const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
+    if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
+    touch(t); if (b === 'min') $('#sum').innerHTML = sumHtml(t);
+  }
+  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie) delete DB.notes[key]; save(); }
+  else if (k === 'c') S.form[a] = v;
+  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
+  else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
+  if (rer) render();
+}
+document.addEventListener('input', onInput);
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'file') { const f = ev.target.files[0]; if (f) f.text().then(x => importData(JSON.parse(x))).catch(() => toast('Datei konnte nicht gelesen werden')); ev.target.value = ''; return; }
+  if (ev.target.dataset.r) onInput(ev);
+});
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+render();
