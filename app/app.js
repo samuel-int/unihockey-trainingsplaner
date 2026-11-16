@@ -41,15 +41,53 @@ const dm = d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() +
 const fmtDate = s => { if (!s) return ''; const d = pd(s); return `${WD[d.getDay()]}, ${dm(d)}${d.getFullYear()}`; };
 
 // ---------- Mannschaften ----------
-// DB.teams: [{ id, name, stage, color, ort, days:[0-6], time:'HH:MM', min }]. Trainings behalten den Text t.team (Name) und bekommen zusätzlich t.teamId.
-// DB.seasons[teamId]: Saison-Konfiguration pro Mannschaft; DB.season bleibt die Konfiguration ohne Mannschaft (und die frühere Konfiguration).
+// DB.teams: [{ id, name, stage, color, ort, sessions:[{ id, wd:0-6, time:'HH:MM', min, ort }], days:[0-6], time:'HH:MM', min }]. Trainings behalten den Text t.team (Name) und bekommen zusätzlich t.teamId.
+// sessions = die Trainingseinheiten der Woche (jede mit eigenem Wochentag, Start, Dauer, Ort; mehrere am selben Tag möglich); leeres time/min/ort = Vorgabe der Mannschaft/Stufe.
+// days/time/min bleiben als Spiegel der Einheiten erhalten (ältere Geräte/Exporte kennen nur sie); fehlen sessions (altes Format), werden sie aus days/time/min/ort abgeleitet.
+// DB.seasons[teamId]: Saison-Konfiguration pro Mannschaft (Trainingstage kommen aus den Einheiten der Mannschaft; s.days spiegelt sie); DB.season bleibt die Konfiguration ohne Mannschaft (und die frühere Konfiguration).
 const TEAM_COLORS = ['#0a5fb4', '#d1495b', '#2e9e6b', '#e0a100', '#8e5bd0', '#0a8fa8', '#c2571a', '#6b7785'];
 const teamById = id => id ? DB.teams.find(x => x.id === id) || null : null;
 const teamByName = n => { n = String(n || '').trim().toLowerCase(); return n ? DB.teams.find(x => x.name.trim().toLowerCase() === n) || null : null; };
 const teamOf = t => teamById(t.teamId) || teamByName(t.team);
 const setTeam = (t, tm) => { t.teamId = tm ? tm.id : ''; t.team = tm ? tm.name : ''; };
-const applyTeam = (t, tm) => { setTeam(t, tm); if (tm.ort && !t.ort) t.ort = tm.ort; if (tm.time && !t.start) t.start = tm.time; };
-const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; DB.teams.push(tm); return tm; };
+const wdOrd = d => (d + 6) % 7;   // Montag zuerst
+const legacySessions = (tm, days, time) => (Array.isArray(days) ? days : Array.isArray(tm.days) ? tm.days : [2, 4]).map(wd => ({ id: 'l' + wd, wd: +wd, time: time ?? tm.time ?? '', min: +tm.min || 0, ort: '' }));
+// Einheiten der Mannschaft, sortiert (Wochentag ab Montag, dann Startzeit); mit Ort-Rückfall auf die Mannschaft (eff = true)
+function teamSessions(tm, eff) {
+  const l = (Array.isArray(tm.sessions) ? tm.sessions : legacySessions(tm)).map((s, i) => ({ id: s.id || 'x' + i, wd: +s.wd, time: s.time || '', min: +s.min || 0, ort: String(s.ort || '').trim() })).filter(s => s.wd >= 0 && s.wd <= 6);
+  if (eff) l.forEach(s => s.ort = s.ort || tm.ort || '');
+  return l.sort((a, b) => wdOrd(a.wd) - wdOrd(b.wd) || a.time.localeCompare(b.time));
+}
+const sessSummary = (tm, s) => `${WD[s.wd]}${s.time ? ' ' + s.time : ''}${s.min ? ' · ' + s.min + '′' : ''}${(s.ort || tm.ort) ? ' · ' + (s.ort || tm.ort) : ''}`;
+function mirrorLegacy(tm) {   // alte Felder (days/time/min) passend zu den Einheiten halten
+  const ss = teamSessions(tm); tm.days = [...new Set(ss.map(s => s.wd))]; tm.time = (ss.find(s => s.time) || {}).time || ''; tm.min = (ss.find(s => s.min) || {}).min || 0;
+}
+// Vorgaben ohne Datum: nur was für alle Einheiten gleich ist (so verhielt sich die einzelne Mannschafts-Startzeit früher)
+function teamDefaults(tm) {
+  const ss = teamSessions(tm, true), same = k => ss.length && ss.every(s => s[k] === ss[0][k]) ? ss[0][k] : '';
+  return { time: ss.length ? same('time') : tm.time || '', ort: same('ort') || tm.ort || '' };
+}
+// Die Einheit der Mannschaft für ein Datum: passender Wochentag; bei mehreren am selben Tag die erste noch nicht belegte
+function matchDay(ts, sess) {   // ts: Trainings der Mannschaft an einem Tag, sess: Einheiten dieses Tages -> { hit: [Training|null je Einheit], extra: übrige Trainings }
+  const left = [...ts].sort((a, b) => (a.start || '').localeCompare(b.start || '')), hit = sess.map(() => null);
+  sess.forEach((s, i) => { if (!s.time) return; const j = left.findIndex(t => t.start === s.time); if (j >= 0) hit[i] = left.splice(j, 1)[0]; });
+  sess.forEach((s, i) => { if (!hit[i] && left.length) hit[i] = left.shift(); });
+  return { hit, extra: left };
+}
+function pickSession(tm, date, self) {
+  const wd = pd(date).getDay(), ss = teamSessions(tm, true).filter(s => s.wd === wd); if (!ss.length) return null; if (ss.length === 1) return ss[0];
+  const byTime = self && self.start && ss.find(s => s.time === self.start); if (byTime) return byTime;
+  const m = matchDay(teamTrainings(tm).filter(t => t.date === date && t !== self), ss), i = m.hit.findIndex(h => !h);
+  return ss[i >= 0 ? i : 0];
+}
+// Mannschaft auf ein Training anwenden: Ort/Start (nur wenn leer) von der Einheit des Datums (oder gegebenen Einheit), sonst von den gemeinsamen Vorgaben; neu = auch die Dauer (t.min) der Einheit
+function applyTeam(t, tm, sess, fresh) {
+  setTeam(t, tm);
+  const s = sess || (t.date ? pickSession(tm, t.date, t) : null), d = teamDefaults(tm), ort = s ? s.ort || tm.ort : d.ort, time = s ? s.time : d.time;
+  if (ort && !t.ort) t.ort = ort; if (time && !t.start) t.start = time;
+  if (fresh && s && s.min) t.min = s.min;
+}
+const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; tm.sessions = teamSessions(tm); DB.teams.push(tm); return tm; };
 const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); return x && x.id === tm.id; });
 function migrate() {
   if (!Array.isArray(DB.teams)) DB.teams = []; if (!DB.seasons || typeof DB.seasons !== 'object') DB.seasons = {};
@@ -63,20 +101,25 @@ function migrate() {
       const tm = mkTeam(n, Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || (DB.season && DB.season.stage) || DB.stage), o = ts.find(t => t.ort), g = ts.find(t => t.start);
       if (o) tm.ort = o.ort; if (g) tm.time = g.start;
       if (DB.season && String(DB.season.team || '').trim().toLowerCase() === n.toLowerCase()) { tm.days = [...(DB.season.days || [2, 4])]; tm.time = DB.season.time || tm.time; DB.seasons[tm.id] = JSON.parse(JSON.stringify(DB.season)); delete DB.seasons[tm.id].team; }
+      delete tm.sessions;   // wird unten aus days/time abgeleitet
     }
   }
   for (const t of DB.trainings) if (t.team && !t.teamId) { const tm = teamByName(t.team); if (tm) { t.teamId = tm.id; ch = true; } }
+  for (const tm of DB.teams) if (!Array.isArray(tm.sessions)) {   // Trainingseinheiten pro Wochentag: aus days/time/min (und den Tagen der Saison-Konfiguration, die bisher die Planung bestimmte) ableiten; alte Felder bleiben
+    const sc = DB.seasons[tm.id];
+    tm.sessions = legacySessions(tm, sc && Array.isArray(sc.days) ? sc.days : tm.days, sc && sc.time ? sc.time : tm.time); ch = true;
+  }
   if (ch) flush();
 }
 function applyFlow(t) {   // Mannschaft/Datum aus dem Neu-Ablauf auf ein frisch erstelltes Training übertragen
   const f = { ...S.seed, ...(S.flow || {}) }, tm = teamById(f.team);
-  if (tm) applyTeam(t, tm); if (f.date && !t.date) t.date = f.date;
+  if (f.date && !t.date) t.date = f.date; if (tm) applyTeam(t, tm, null, true);
   S.seed = { team: '', date: '' }; save(); return tm;
 }
 function resolveTeam(t, meta) {   // Import: Mannschaft des Trainings auf dem Gerät finden oder neu anlegen
   const nm = String(t.team || (meta[t.teamId] || {}).name || '').trim();
   let tm = teamById(t.teamId) || teamByName(nm);
-  if (!tm && nm) { const m = meta[t.teamId] || {}; tm = mkTeam(nm, m.stage || t.stage); if (m.color) tm.color = m.color; if (m.ort) tm.ort = m.ort; if (m.time) tm.time = m.time; if (Array.isArray(m.days)) tm.days = m.days; if (m.min) tm.min = +m.min || 0; if (m.id && !teamById(m.id)) tm.id = m.id; }
+  if (!tm && nm) { const m = meta[t.teamId] || {}; tm = mkTeam(nm, m.stage || t.stage); if (m.color) tm.color = m.color; if (m.ort) tm.ort = m.ort; if (m.time) tm.time = m.time; if (Array.isArray(m.days)) tm.days = m.days; if (m.min) tm.min = +m.min || 0; tm.sessions = Array.isArray(m.sessions) ? m.sessions : legacySessions(tm); if (m.id && !teamById(m.id)) tm.id = m.id; }
   setTeam(t, tm); return tm;
 }
 migrate();
@@ -447,50 +490,64 @@ function viewBlock(st, b) {
 function seasonCfg() {
   if (S.sTeam === undefined) S.sTeam = (teamByName(DB.season.team) || {}).id || '';
   const tm = teamById(S.sTeam); if (!tm) S.sTeam = '';
+  return seasonCfgFor(tm);
+}
+function seasonCfgFor(tm) {
   if (tm && !DB.seasons[tm.id]) DB.seasons[tm.id] = { stage: tm.stage, days: [...(tm.days || [2, 4])], time: tm.time || '', hol: [...(DB.season.hol || [])], start: DB.season.start || '' };
   const s = tm ? DB.seasons[tm.id] : DB.season;
+  if (tm) s.days = [...new Set(teamSessions(tm).map(x => x.wd))];   // Trainingstage kommen aus den Einheiten der Mannschaft (alte Felder bleiben als Spiegel)
   if (!s.start) { const n = new Date(), y = n.getMonth() >= 4 ? n.getFullYear() : n.getFullYear() - 1; let d = new Date(y, 4, 1); while (d.getDay() !== 1) d = addDays(d, 1); s.start = iso(d); }
   s.stage = s.stage || DB.stage; s.days = s.days || [2, 4]; s.hol = s.hol || [];
   return s;
 }
-function seasonWeeks() {
-  const s = seasonCfg(), st = stageById(s.stage), out = [], days = [...s.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+// Einheiten, an denen die Saison plant: die der Mannschaft, sonst die Tage/Startzeit der allgemeinen Konfiguration
+const planSessions = (s, tm) => tm ? teamSessions(tm, true) : [...s.days].sort((a, b) => wdOrd(a) - wdOrd(b)).map(wd => ({ id: 'd' + wd, wd, time: s.time || '', min: 0, ort: '' }));
+function seasonWeeks(s = seasonCfg(), tm = teamById(S.sTeam)) {
+  const st = stageById(s.stage), out = [], days = planSessions(s, tm);
   const flat = st.slots ? st.blocks.flatMap(b => b.weeks.map(w => ({ b, w }))) : null;
   let mon = monday(pd(s.start)), k = 0, cnt = {}, lastB = null;
   for (let i = 0; i < 60; i++, mon = addDays(mon, 7)) {
     const key = iso(mon), hol = s.hol.includes(key), row = { key, mon, hol, days: [] };
     if (flat) { if (k >= flat.length) break; if (!hol) { row.b = flat[k].b; row.w = flat[k].w; k++; } }
     else { const mid = addDays(mon, 3); if (i > 8 && mid.getMonth() === 3) break; row.b = st.blocks.find(b => b.monat === MONTHS[mid.getMonth()]); if (!row.b && !hol) row.pause = true; }
-    if (!hol && row.b) days.forEach((wd, di) => {
-      const d = addDays(mon, (wd + 6) % 7); let idx = di;
+    if (!hol && row.b) days.forEach((se, di) => {
+      const d = addDays(mon, wdOrd(se.wd)); let idx = di;
       if (!flat) { cnt[row.b.nr] = (cnt[row.b.nr] || 0) + 1; idx = (cnt[row.b.nr] - 1) % 12; }
-      row.days.push({ date: iso(d), wd, idx });
+      row.days.push({ date: iso(d), wd: se.wd, idx, sess: se });
     });
     row.first = !!(row.b && row.b !== lastB && !hol); row.ev = row.w ? row.w.events : (row.first ? row.b.events : []); if (row.b && !hol) lastB = row.b;
     out.push(row);
   }
   return out;
 }
+// Chips einer Woche: je Einheit entweder das schon geplante Training oder «+» zum Anlegen (mehrere Einheiten am selben Tag werden getrennt geführt)
+function dayChips(r, byDate, st) {
+  const dates = [...new Set(r.days.map(d => d.date))];
+  return dates.map(date => {
+    const ds = r.days.filter(d => d.date === date), m = matchDay(byDate[date] || [], ds.map(d => d.sess));
+    return ds.map((d, i) => { const lbl = `${WD[d.wd]} ${dm(pd(date))}${d.sess.time ? ' · ' + d.sess.time : ''}`, t = m.hit[i];
+      return t ? `<a class="chip sel" href="#/t/${t.id}">${lbl} ✓</a>` : `<button class="chip" data-a="sNew" data-s="${st.id}" data-b2="${r.b.nr}" data-w="${r.w ? r.w.w : 0}" data-i="${d.idx}" data-d="${date}" data-x="${esc(d.sess.id)}">+ ${lbl}</button>`; }).join('') + m.extra.map(t => `<a class="chip sel" href="#/t/${t.id}">${WD[pd(date).getDay()]} ${dm(pd(date))} ✓</a>`).join('');
+  }).join('');
+}
 function viewSeason() {
   const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date())), tm = teamById(S.sTeam);
   const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!tm || (teamOf(t) || {}).id === tm.id)) (byDate[t.date] = byDate[t.date] || []).push(t); });
-  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : tm ? `Wochenplan · ${esc(tm.name)}` : 'Wochenplan nach RTP', ctxBar()) + (S.flow ? '' : seg('season')) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
+  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : tm ? `Wochenplan · ${esc(tm.name)}` : 'Wochenplan nach RTP', ctxBar()) + (S.flow ? '' : seg('season')) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${tm ? teamSessions(tm).map(x => WD[x.wd] + (x.time ? ' ' + x.time : '')).join(', ') || 'keine Trainingszeit' : s.days.map(d => WD[d]).join(', ')}</span></summary>
     <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Start (RTP-Woche 1)<input type="date" data-b="s:start" data-r="1" value="${esc(s.start)}"></label></div>
-    <div class="grid2"><label>Mannschaft<select data-b="s:team" data-r="1">${opt('', 'Ohne Mannschaft', S.sTeam)}${DB.teams.map(x => opt(x.id, x.name, S.sTeam)).join('')}</select></label><label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label></div>
-    <div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
+    <div class="grid2"><label>Mannschaft<select data-b="s:team" data-r="1">${opt('', 'Ohne Mannschaft', S.sTeam)}${DB.teams.map(x => opt(x.id, x.name, S.sTeam)).join('')}</select></label>${tm ? '' : `<label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label>`}</div>
+    ${tm ? `<div class="small muted">Trainingszeiten von ${esc(tm.name)}</div><p class="nomargin">${teamSessions(tm).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit.'}</p><p class="small"><a href="#/team/${tm.id}/edit">Trainingszeiten bearbeiten</a></p>` : `<div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>`}
     <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'}</p></details>
   ${seasonWeeks().map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
     <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? chip('diese Woche') : ''}</span><button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button></div>
     ${r.hol ? '' : r.b ? `<div class="small"><a href="#/rtp/${st.id}/${r.b.nr}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>
       ${r.first ? `<button class="btn sm" data-a="sBlock" data-k="${r.b.nr}">Ganzen Block ${r.b.nr} planen</button>` : ''}${r.ev.length ? `<div class="chips">${r.ev.map(e => chip('📌 ' + e)).join('')}</div>` : ''}
-      <div class="chips">${r.days.map(d => (byDate[d.date] || []).length ? byDate[d.date].map(t => `<a class="chip sel" href="#/t/${t.id}">${WD[d.wd]} ${dm(pd(d.date))} ✓</a>`).join('') : `<button class="chip" data-a="sNew" data-s="${st.id}" data-b2="${r.b.nr}" data-w="${r.w ? r.w.w : 0}" data-i="${d.idx}" data-d="${d.date}">+ ${WD[d.wd]} ${dm(pd(d.date))}</button>`).join('')}</div>` : '<div class="small muted">Saisonpause / frei</div>'}</div>`).join('')}`;
+      <div class="chips">${dayChips(r, byDate, st)}</div>` : '<div class="small muted">Saisonpause / frei</div>'}</div>`).join('')}`;
 }
 
-function seasonCreate(st, b, w, idx, date) {
-  const s = seasonCfg();
+function seasonCreate(st, b, w, idx, date, sess, tm) {   // sess = Einheit, auf die das Training fällt (Startzeit, Ort, Dauer); tm = Mannschaft oder null
   const t = st.slots && !(w && w.trainings[idx]) ? newTraining({ stage: st.id, date, ef: b.main.ef, sp: b.main.sp, ziel: b.main.ziel, rtp: { stage: st.id, block: b.nr, week: w ? w.w : 0, idx }, title: `${st.id} · Block ${b.nr} · Zusatztraining` })
     : trainingFromRtp(st.id, b.nr, w ? w.w : 0, idx, date);
-  const tm = teamById(S.sTeam); if (tm) applyTeam(t, tm); if (s.time) t.start = s.time; save(); return t;
+  if (tm) applyTeam(t, tm, sess, true); else if (sess && sess.time) t.start = sess.time; save(); return t;
 }
 
 // ---------- Ansicht: Kalender ----------
@@ -514,12 +571,13 @@ function viewCal() {
 }
 
 // ---------- Ansichten: Mannschaften ----------
-const teamInfo = tm => [(stageById(tm.stage) || {}).name, tm.ort, tm.days && tm.days.length ? [...tm.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => WD[d]).join(', ') + (tm.time ? ' ab ' + tm.time : '') : tm.time && 'ab ' + tm.time, tm.min && tm.min + ' Min.'].filter(Boolean);
+const teamInfo = tm => [(stageById(tm.stage) || {}).name].filter(Boolean);
+const sessLines = tm => teamSessions(tm).map(x => `<div class="small">${esc(sessSummary(tm, x))}</div>`).join('') || '<div class="small muted">Noch keine Trainingszeit</div>';
 function viewTeams() {
   const today = iso(new Date());
   return head('Mannschaften', null, `<a class="btn pri" href="#/team/new">+ Neu</a>`, 'Jede Mannschaft hat ihren eigenen Trainingsplan') + doneBar('/teams') + (DB.teams.length ? DB.teams.map(tm => {
     const ts = teamTrainings(tm), next = ts.filter(t => t.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
-    return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
+    return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="muted">${sessLines(tm)}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
   }).join('') : `<div class="card empty"><h2>Noch keine Mannschaft</h2><p>Lege deine Mannschaft an (Name, Stufe, Farbe, Ort, Trainingstage). Dann planst du ihre Trainings und die Saison direkt dort und siehst sie im Kalender in ihrer Farbe.</p><p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></p></div>`);
 }
 function viewTeam(id) {
@@ -527,7 +585,7 @@ function viewTeam(id) {
   const today = iso(new Date()), all = teamTrainings(tm).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '')), up = all.filter(t => !t.date || t.date >= today), past = all.filter(t => t.date && t.date < today).reverse();
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
-  <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Vorgaben für neue Trainings</div><p class="nomargin">${esc(teamInfo(tm).join(' · ') || 'keine')}</p></div>
+  <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison / Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button></div>
   <h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen» oder «Saison / Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
@@ -535,15 +593,18 @@ function viewTeam(id) {
 function viewTeamForm(id) {
   const tm = id ? teamById(id) : null;
   if (id && !tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
-  if (!S.mf || S.mf.key !== (id || 'new')) S.mf = tm ? { ...JSON.parse(JSON.stringify(tm)), key: id } : { key: 'new', id: null, name: '', stage: DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: (stageById(DB.stage) || R.stages[0]).minutes };
+  if (!S.mf || S.mf.key !== (id || 'new')) S.mf = tm ? { ...JSON.parse(JSON.stringify(tm)), sessions: JSON.parse(JSON.stringify(teamSessions(tm))), minEdited: 1, key: id } : { key: 'new', id: null, name: '', stage: DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', sessions: [{ id: uid(), wd: 2, time: '', min: (stageById(DB.stage) || R.stages[0]).minutes, ort: '' }] };
   const f = S.mf, n = tm ? teamTrainings(tm).length : 0;
   return head(tm ? 'Mannschaft bearbeiten' : 'Neue Mannschaft', tm ? '/team/' + tm.id : '/teams', '', tm ? esc(tm.name) : 'Name, Stufe und Vorgaben festlegen') + `<div class="card">
     <label>Name<input data-b="m:name" value="${esc(f.name)}" placeholder="z.B. D2-Junioren"></label>
-    <div class="grid2"><label>Stufe (RTP)<select data-b="m:stage" data-r="1">${stageOpts(f.stage)}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="m:min" value="${esc(f.min || '')}" placeholder="aus RTP"></label></div>
+    <label>Stufe (RTP)<select data-b="m:stage" data-r="1">${stageOpts(f.stage)}</select></label>
     <div class="small muted" style="margin-top:10px">Farbe</div><div class="chips">${TEAM_COLORS.map(c => `<button class="chip swatch ${f.color === c ? 'sel' : ''}" style="--c:${c};background:${c}" data-a="mColor" data-k="${c}" aria-label="Farbe ${c}"></button>`).join('')}</div>
-    <div class="grid2"><label>Ort / Halle<input data-b="m:ort" value="${esc(f.ort)}" placeholder="Halle"></label><label>Startzeit<input type="time" data-b="m:time" value="${esc(f.time)}"></label></div>
-    <div class="small muted" style="margin-top:10px">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${f.days.includes(d) ? 'sel' : ''}" data-a="mDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
-    <p class="small muted">Diese Vorgaben füllen neue Trainings und die Saisonplanung der Mannschaft vor.</p>
+    <label>Ort / Halle (Standard)<input data-b="m:ort" value="${esc(f.ort)}" placeholder="Halle"></label>
+    <div class="small muted" style="margin-top:14px"><b>Trainingszeiten</b> – jede Einheit der Woche mit eigenem Tag, Start, Dauer und Ort</div>
+    ${f.sessions.map((x, i) => `<div class="sess"><div class="sgrid"><label>Wochentag<select data-b="ms:${esc(x.id)}:wd">${[1, 2, 3, 4, 5, 6, 0].map(d => opt(String(d), WDL[d], String(x.wd))).join('')}</select></label><label>Start<input type="time" data-b="ms:${esc(x.id)}:time" value="${esc(x.time)}"></label><label>Min.<input type="number" inputmode="numeric" data-b="ms:${esc(x.id)}:min" value="${esc(x.min || '')}" placeholder="${(stageById(f.stage) || {}).minutes || ''}"></label></div>
+      <div class="row"><label class="grow">Ort / Halle<input data-b="ms:${esc(x.id)}:ort" value="${esc(x.ort)}" placeholder="${esc(f.ort || 'wie Standard')}"></label><button class="btn sm danger" data-a="mDelS" data-id="${esc(x.id)}" aria-label="Trainingszeit ${i + 1} entfernen">Entfernen</button></div></div>`).join('') || '<p class="small muted">Noch keine Trainingszeit – ohne sie plant die Saison keine Tage.</p>'}
+    <button class="btn block" data-a="mAddS">+ Trainingszeit hinzufügen</button>
+    <p class="small muted">Diese Zeiten füllen neue Trainings (Datum → passende Einheit: Start, Ort, Dauer) und die Saisonplanung der Mannschaft vor. Zwei Einheiten am selben Tag sind möglich.</p>
     <button class="btn pri block" data-a="saveTeam">Speichern</button>${tm ? `<button class="btn danger block" data-a="delTeam" data-id="${tm.id}">Mannschaft löschen${n ? ` (${n} Trainings)` : ''}</button>` : ''}</div>`;
 }
 
@@ -596,7 +657,7 @@ function importData(d) {
 }
 function doImport() {
   const d = S.imp; S.imp = null;
-  const meta = {}; (d.m || []).forEach(m => { if (m && m.id && m.name) { meta[m.id] = m; if (!teamById(m.id) && !teamByName(m.name)) { const n = mkTeam(m.name, m.stage); Object.assign(n, { color: m.color || n.color, ort: m.ort || '', time: m.time || '', days: Array.isArray(m.days) ? m.days : n.days, min: +m.min || 0, id: m.id }); } } });
+  const meta = {}; (d.m || []).forEach(m => { if (m && m.id && m.name) { meta[m.id] = m; if (!teamById(m.id) && !teamByName(m.name)) { const n = mkTeam(m.name, m.stage); Object.assign(n, { color: m.color || n.color, ort: m.ort || '', time: m.time || '', days: Array.isArray(m.days) ? m.days : n.days, min: +m.min || 0, id: m.id }); n.sessions = Array.isArray(m.sessions) ? m.sessions.map(s => ({ ...s })) : legacySessions(n); } } });
   for (const t of d.t) { if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta); const i = DB.trainings.findIndex(x => x.id === t.id); if (i >= 0) DB.trainings[i] = t; else DB.trainings.push(t); }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
@@ -604,7 +665,7 @@ function doImport() {
 }
 
 // ---------- Router ----------
-const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Ort, Startzeit und Stufe werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
+const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Stufe und – passend zum Wochentag des Datums – Startzeit, Dauer und Ort werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
   <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
   <button class="card choice" data-a="flow" data-k="season"><b>📅 Über die Saisonplanung</b><span class="small muted">Du siehst den Wochenplan und legst Trainings direkt auf einen Tag.</span></button>
   <button class="card choice" data-a="flow" data-k="blank"><b>✏️ Leeres Training</b><span class="small muted">Ohne Vorlage: du fügst Blöcke selbst hinzu, auch aus der Bibliothek.</span></button></div>`;
@@ -662,14 +723,19 @@ const A = {
   flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k, ...S.seed }; const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.sTeam = tm.id; save(); } go(k === 'rtp' ? '/rtp' : '/season'); },
   flowCancel() { S.flow = null; S.seed = { team: '', date: '' }; go('/'); },
   mColor(el) { S.mf.color = el.dataset.k; document.querySelectorAll('[data-a=mColor]').forEach(b => b.classList.toggle('sel', b === el)); },
-  mDay(el) { const f = S.mf, k = +el.dataset.k; f.days = f.days.includes(k) ? f.days.filter(x => x !== k) : [...f.days, k]; el.classList.toggle('sel'); },
+  mAddS() {
+    const f = S.mf, used = new Set(f.sessions.map(x => x.wd)), last = f.sessions[f.sessions.length - 1] || {}, wd = [2, 4, 5, 1, 3, 6, 0].find(d => !used.has(d));
+    f.sessions.push({ id: uid(), wd: wd ?? 2, time: last.time || '', min: last.min || (stageById(f.stage) || {}).minutes || 0, ort: last.ort || '' }); render();
+  },
+  mDelS(el) { S.mf.sessions = S.mf.sessions.filter(x => x.id !== el.dataset.id); render(); },
   teamSeason(el) { S.sTeam = el.dataset.k; render.seasonScrolled = false; go('/season'); },
   saveTeam() {
     const f = S.mf, name = f.name.trim(); if (!name) return toast('Bitte einen Namen eingeben');
     if (DB.teams.some(x => x.id !== f.id && x.name.trim().toLowerCase() === name.toLowerCase())) return toast('Diese Mannschaft gibt es schon');
-    const vals = { name, stage: f.stage, color: f.color, ort: f.ort.trim(), days: [...f.days], time: f.time || '', min: +f.min || 0 }; let tm;
+    const vals = { name, stage: f.stage, color: f.color, ort: f.ort.trim(), sessions: f.sessions.map(x => ({ id: x.id, wd: +x.wd, time: x.time || '', min: +x.min || 0, ort: String(x.ort || '').trim() })) }; let tm;
     if (f.id) { tm = teamById(f.id); const mine = teamTrainings(tm); Object.assign(tm, vals); mine.forEach(t => setTeam(t, tm)); }
     else { tm = { id: uid(), ...vals }; DB.teams.push(tm); }
+    mirrorLegacy(tm);
     S.mf = null; save(); done(f.id ? `Mannschaft «${name}» gespeichert.` : `Mannschaft «${name}» angelegt – plane jetzt ihr erstes Training.`, `/team/${tm.id}`);
   },
   delTeam(el) {
@@ -716,8 +782,11 @@ const A = {
     S.flow = null; done(`${n} Trainings erstellt (${st.id} · Block ${b.nr}) – hier in der Liste.`, '/');
   },
   sBlock(el) {
-    const s = seasonCfg(), have = new Set(DB.trainings.filter(t => !S.sTeam || (teamOf(t) || {}).id === S.sTeam).map(t => t.date)); let n = 0;
-    seasonWeeks().forEach(r => { if (r.b && r.b.nr === +el.dataset.k) r.days.forEach(d => { if (!have.has(d.date)) { seasonCreate(stageById(s.stage), r.b, r.w, d.idx, d.date); n++; } }); });
+    const s = seasonCfg(), tm = teamById(S.sTeam), ts = DB.trainings.filter(t => !tm || (teamOf(t) || {}).id === tm.id); let n = 0;
+    seasonWeeks().forEach(r => { if (r.b && r.b.nr === +el.dataset.k) [...new Set(r.days.map(d => d.date))].forEach(date => {
+      const ds = r.days.filter(d => d.date === date), m = matchDay(ts.filter(t => t.date === date), ds.map(d => d.sess));
+      ds.forEach((d, i) => { if (!m.hit[i]) { seasonCreate(stageById(s.stage), r.b, r.w, d.idx, date, d.sess, tm); n++; } });
+    }); });
     toast(n ? `${n} Trainings geplant` : 'Alle Trainings dieses Blocks sind schon geplant'); render();
   },
   share() { shareTraining(curT()); },
@@ -746,7 +815,7 @@ const A = {
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
   fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
-  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
+  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), tm = teamById(S.sTeam), sess = planSessions(seasonCfg(), tm).find(x => x.id === d.x), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d, sess, tm); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
   sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
   runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
@@ -775,7 +844,8 @@ function onInput(ev) {
   else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'f') { S.seed[a] = v; return; }
-  else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.min = stageById(v).minutes; if (a === 'min') f.minEdited = 1; }
+  else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
+  else if (k === 'ms') { const f = S.mf, x = f.sessions.find(y => y.id === a); if (!x) return; x[b] = b === 'wd' ? +v : v; if (b === 'min') f.minEdited = 1; }
   else if (k === 's' && a === 'team') { S.sTeam = v; render.seasonScrolled = false; render(); return; }
   else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
   else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
