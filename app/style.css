@@ -75,3 +75,8 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .tcard.past { opacity: .6; } .tcard.picked { outline: 2px solid var(--pri); } .tcard[data-a] { cursor: pointer; }
 .selbar { position: sticky; top: 58px; z-index: 4; } .selbar b { flex: 1; }
 #toast.act { pointer-events: auto; } #toast button { margin-left: 10px; background: none; border: 0; color: #7cc0ff; font: inherit; font-weight: 700; cursor: pointer; padding: 4px; }
+
+/* RTP-Zusammenfassung */
+.rtpsum { border-left: 4px solid var(--pri); } .rtpsum > summary, .rs-h { font-weight: 600; font-size: .95rem; display: block; }
+.rtpsum .rs-v { margin: 0 0 8px; } .rtpsum .small.muted { margin-top: 8px; } .rtpsum .rs-sec { margin: 4px 0 0; }
+.run .rtpsum p { font-size: .95rem; }
