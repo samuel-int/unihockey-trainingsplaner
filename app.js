@@ -10,7 +10,7 @@ const nl2br = s => esc(s).replace(/\n/g, '<br>');
 
 // ---------- Speicher ----------
 const KEY = 'unihockey-planer.v1';
-const EMPTY = () => ({ v: 1, trainings: [], custom: [], notes: {}, season: {}, stage: 'D' });
+const EMPTY = () => ({ v: 1, trainings: [], custom: [], notes: {}, season: {}, stage: 'D', teams: [], seasons: {} });
 let DB = EMPTY();
 try { DB = Object.assign(EMPTY(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* leer starten */ }
 let saveT;
@@ -18,7 +18,7 @@ const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } cat
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); };
 addEventListener('pagehide', flush);
 
-const S = { open: new Set(), pick: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null };
+const S = { open: new Set(), pick: null, seed: { team: '', date: '' }, flow: null, done: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null };
 
 // ---------- Typen & Farben ----------
 const TYPES = {
@@ -38,6 +38,47 @@ const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); r
 const monday = d => addDays(d, -((d.getDay() + 6) % 7));
 const dm = d => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
 const fmtDate = s => { if (!s) return ''; const d = pd(s); return `${WD[d.getDay()]}, ${dm(d)}${d.getFullYear()}`; };
+
+// ---------- Mannschaften ----------
+// DB.teams: [{ id, name, stage, color, ort, days:[0-6], time:'HH:MM', min }]. Trainings behalten den Text t.team (Name) und bekommen zusätzlich t.teamId.
+// DB.seasons[teamId]: Saison-Konfiguration pro Mannschaft; DB.season bleibt die Konfiguration ohne Mannschaft (und die frühere Konfiguration).
+const TEAM_COLORS = ['#0a5fb4', '#d1495b', '#2e9e6b', '#e0a100', '#8e5bd0', '#0a8fa8', '#c2571a', '#6b7785'];
+const teamById = id => id ? DB.teams.find(x => x.id === id) || null : null;
+const teamByName = n => { n = String(n || '').trim().toLowerCase(); return n ? DB.teams.find(x => x.name.trim().toLowerCase() === n) || null : null; };
+const teamOf = t => teamById(t.teamId) || teamByName(t.team);
+const setTeam = (t, tm) => { t.teamId = tm ? tm.id : ''; t.team = tm ? tm.name : ''; };
+const applyTeam = (t, tm) => { setTeam(t, tm); if (tm.ort && !t.ort) t.ort = tm.ort; if (tm.time && !t.start) t.start = tm.time; };
+const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; DB.teams.push(tm); return tm; };
+const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); return x && x.id === tm.id; });
+function migrate() {
+  if (!Array.isArray(DB.teams)) DB.teams = []; if (!DB.seasons || typeof DB.seasons !== 'object') DB.seasons = {};
+  let ch = false;
+  if (!DB.teamsInit) {   // einmalig: aus vorhandenen Team-Namen (Trainings, Saison) Mannschaften anlegen
+    DB.teamsInit = true; ch = true;
+    const names = [...DB.trainings.map(t => t.team), DB.season && DB.season.team].map(x => String(x || '').trim()).filter(Boolean);
+    for (const n of names) if (!teamByName(n)) {
+      const ts = DB.trainings.filter(t => String(t.team || '').trim().toLowerCase() === n.toLowerCase()), cnt = {};
+      ts.forEach(t => cnt[t.stage] = (cnt[t.stage] || 0) + 1);
+      const tm = mkTeam(n, Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || (DB.season && DB.season.stage) || DB.stage), o = ts.find(t => t.ort), g = ts.find(t => t.start);
+      if (o) tm.ort = o.ort; if (g) tm.time = g.start;
+      if (DB.season && String(DB.season.team || '').trim().toLowerCase() === n.toLowerCase()) { tm.days = [...(DB.season.days || [2, 4])]; tm.time = DB.season.time || tm.time; DB.seasons[tm.id] = JSON.parse(JSON.stringify(DB.season)); delete DB.seasons[tm.id].team; }
+    }
+  }
+  for (const t of DB.trainings) if (t.team && !t.teamId) { const tm = teamByName(t.team); if (tm) { t.teamId = tm.id; ch = true; } }
+  if (ch) flush();
+}
+function applyFlow(t) {   // Mannschaft/Datum aus dem Neu-Ablauf auf ein frisch erstelltes Training übertragen
+  const f = { ...S.seed, ...(S.flow || {}) }, tm = teamById(f.team);
+  if (tm) applyTeam(t, tm); if (f.date && !t.date) t.date = f.date;
+  S.seed = { team: '', date: '' }; save(); return tm;
+}
+function resolveTeam(t, meta) {   // Import: Mannschaft des Trainings auf dem Gerät finden oder neu anlegen
+  const nm = String(t.team || (meta[t.teamId] || {}).name || '').trim();
+  let tm = teamById(t.teamId) || teamByName(nm);
+  if (!tm && nm) { const m = meta[t.teamId] || {}; tm = mkTeam(nm, m.stage || t.stage); if (m.color) tm.color = m.color; if (m.ort) tm.ort = m.ort; if (m.time) tm.time = m.time; if (Array.isArray(m.days)) tm.days = m.days; if (m.min) tm.min = +m.min || 0; if (m.id && !teamById(m.id)) tm.id = m.id; }
+  setTeam(t, tm); return tm;
+}
+migrate();
 
 // ---------- Bibliothek (aus RTP + Goalie + eigene Übungen) ----------
 let LIB = null;
@@ -92,7 +133,7 @@ const total = t => t.items.reduce((a, i) => a + (+i.min || 0), 0);
 const touch = t => { t.updated = Date.now(); save(); };
 function newTraining(p) {
   const st = stageById(p.stage || DB.stage) || R.stages[2];
-  const t = { id: uid(), title: 'Neues Training', date: '', team: '', ort: '', start: '', stage: st.id, min: st.minutes, ef: '', sp: '', ziel: '', sec: '', notes: '', rtp: null, items: [], updated: Date.now(), ...p };
+  const t = { id: uid(), title: 'Neues Training', date: '', team: '', teamId: '', ort: '', start: '', stage: st.id, min: st.minutes, ef: '', sp: '', ziel: '', sec: '', notes: '', rtp: null, items: [], updated: Date.now(), ...p };
   DB.trainings.push(t); save(); return t;
 }
 function pickGoalieEx(stage, n) {
@@ -136,7 +177,9 @@ function itemFromLib(e, t) {
 
 // ---------- UI-Helfer ----------
 function toast(msg, act, fn) { const el = $('#toast'); el.innerHTML = esc(msg) + (act ? ` <button data-a="toastAct">${esc(act)}</button>` : ''); toast.fn = fn; el.className = act ? 'on act' : 'on'; clearTimeout(toast.t); toast.t = setTimeout(() => el.className = '', act ? 7000 : 2400); }
-const teamsOf = () => [...new Set(DB.trainings.map(t => t.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+const teamDot = tm => `<span class="dot" style="background:${esc(tm.color)}"></span>`;
+const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && (tm || t.team) ? `${tm ? teamDot(tm) : ''}<b>${esc(tm ? tm.name : t.team)}</b> · ` : ''}${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}`; };
+const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/season', 'Saison', 'season']].map(([h, l, k]) => `<a href="#${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
 const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
 function removeTrainings(list) {
@@ -150,7 +193,7 @@ const go = h => { if (location.hash === '#' + h) render(); else location.hash = 
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
 const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
 const stageOpts = (sel, all) => (all ? opt('', 'Alle Stufen', sel) : '') + R.stages.map(s => opt(s.id, s.name, sel)).join('');
-const BACKL = h => h === '/' ? 'Trainings' : h === '/lib' ? 'Bibliothek' : h === '/rtp' ? 'RTP' : h === '/season' ? 'Saison' : h === '/more' ? 'Mehr' : h === '/new' ? 'Neu' : /^\/t\//.test(h) ? 'Training' : /^\/rtp\//.test(h) ? 'Block' : /^\/lib\/x/.test(h) ? 'Übung' : 'Zurück';
+const BACKL = h => h === '/' ? 'Trainings' : h === '/lib' ? 'Bibliothek' : h === '/rtp' ? 'RTP' : h === '/season' ? 'Saison' : h === '/teams' ? 'Teams' : /^\/team\//.test(h) ? 'Mannschaft' : h === '/more' ? 'Mehr' : h === '/new' ? 'Neu' : /^\/t\//.test(h) ? 'Training' : /^\/rtp\//.test(h) ? 'Block' : /^\/lib\/x/.test(h) ? 'Übung' : 'Zurück';
 // Kopfzeile: Zurück mit Zielname, Titel, optional Untertitel (HTML, selbst escapen), rechts Aktionen, optional Kontextleiste (Ablauf/Auswahl)
 const head = (title, back, right = '', sub = '', bar = '') => `<header class="top"><div class="trow">${back ? `<a class="back" href="#${back}" aria-label="Zurück zu ${esc(BACKL(back))}">‹<span>${esc(BACKL(back))}</span></a>` : ''}<div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
 // Kontextleiste: laufender Ablauf (Neues Training) oder Auswahlmodus (Übung für ein Training) – immer sichtbar und abbrechbar
@@ -161,27 +204,27 @@ function ctxBar(step) {
   const rtp = f.k === 'rtp', n = step === 'train' ? 2 : 1;
   return `<div class="ctx"><span class="grow"><b>Neues Training${rtp ? ' aus dem RTP' : ' über die Saison'}</b>${flowFor()}<br>${rtp ? `Schritt ${n} von 2: ${n === 1 ? 'Block wählen' : 'Training wählen'}` : 'Tippe bei einem Tag auf «+»'}</span><button class="btn sm" data-a="flowCancel">Abbrechen</button>${rtp ? `<div class="steps"><i class="on"></i><i class="${n === 2 ? 'on' : ''}"></i></div>` : ''}</div>`;
 }
-const flowFor = () => '';
+const flowFor = () => { const f = { ...S.seed, ...(S.flow || {}) }, tm = teamById(f.team); return (tm ? ` · ${esc(tm.name)}` : '') + (f.date ? ` · ${fmtDate(f.date)}` : ''); };
 const doneBar = h => S.done && S.done.h === h ? `<div class="card okbar"><span class="grow">✓ ${esc(S.done.text)}</span><button class="btn sm" data-a="doneX" aria-label="Schliessen">✕</button></div>` : '';
 function done(text, h) { S.done = { text, h }; go(h); }
 
 // ---------- Ansicht: Trainings ----------
 function viewHome() {
-  const today = iso(new Date()), teams = teamsOf(), f = teams.includes(S.team) ? S.team : '';
-  const ts = DB.trainings.filter(t => !f || t.team === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
+  const today = iso(new Date()), teams = DB.teams, f = teamById(S.team) ? S.team : '';
+  const ts = DB.trainings.filter(t => !f || (teamOf(t) || {}).id === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
   S.visible = ts.map(t => t.id);
   const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div>
-    <div class="muted small">${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}</div>
+    <div class="muted small">${metaLine(t, true)}</div>
     <div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div>`;
   const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#/t/${t.id}">${inner(t)}</a>`; };
   const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
   const gtitle = g => { const t = g[0]; return [t.team, t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
-  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<a class="btn pri" href="#/new">+ Neu</a>`, '', '') + doneBar('/') + (DB.trainings.length ? `
-    ${teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Teams</button>${teams.map(x => `<button class="chip ${f === x ? 'sel' : ''}" data-a="teamF" data-k="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
+  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<button class="btn pri" data-a="newT" data-team="${esc(f)}">+ Neu</button>`, '', '') + seg('list') + doneBar('/') + (DB.trainings.length ? `
+    ${teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Mannschaften</button>${teams.map(x => `<button class="chip ${f === x.id ? 'sel' : ''}" data-a="teamF" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
     ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button></div>` : ''}
     ${[...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('')}` : `
     <div class="card empty"><h2>Willkommen 👋</h2><p>Plane Trainings nach den Rahmentrainingsplänen (RTP) von swiss unihockey – mit eigener Goalie-Spur, Hallenmodus und Saisonplanung. Alles bleibt auf deinem Gerät, ohne Login.</p>
-    <p><a class="btn pri" href="#/new">Erstes Training erstellen</a></p><p class="small muted">Du wählst, ob du mit dem RTP, der Saisonplanung oder einem leeren Training startest.</p></div>`);
+    <p><button class="btn pri" data-a="newT" data-team="">Erstes Training erstellen</button> <a class="btn" href="#/teams">Mannschaft anlegen</a></p><p class="small muted">Du wählst, ob du mit dem RTP, der Saisonplanung oder einem leeren Training startest.</p></div>`);
 }
 
 // ---------- Ansicht: Editor ----------
@@ -218,7 +261,7 @@ function viewEdit(t) {
   return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
-      <label>Team<input data-b="t:team" list="teams" value="${esc(t.team)}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
+      <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
       <label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="t:min" value="${esc(t.min)}"></label></div>
     <details ${t.sp || t.ziel ? '' : 'open'}><summary>${t.sp ? `<span class="dot" style="background:${efColor(t.ef)}"></span>${esc(t.sp)}` : 'Schwerpunkt &amp; Ziel'}</summary>
       <label>Stufe<select data-b="t:stage">${stageOpts(t.stage)}</select></label>
@@ -391,7 +434,10 @@ function viewBlock(st, b) {
 
 // ---------- Ansicht: Saison ----------
 function seasonCfg() {
-  const s = DB.season;
+  if (S.sTeam === undefined) S.sTeam = (teamByName(DB.season.team) || {}).id || '';
+  const tm = teamById(S.sTeam); if (!tm) S.sTeam = '';
+  if (tm && !DB.seasons[tm.id]) DB.seasons[tm.id] = { stage: tm.stage, days: [...(tm.days || [2, 4])], time: tm.time || '', hol: [...(DB.season.hol || [])], start: DB.season.start || '' };
+  const s = tm ? DB.seasons[tm.id] : DB.season;
   if (!s.start) { const n = new Date(), y = n.getMonth() >= 4 ? n.getFullYear() : n.getFullYear() - 1; let d = new Date(y, 4, 1); while (d.getDay() !== 1) d = addDays(d, 1); s.start = iso(d); }
   s.stage = s.stage || DB.stage; s.days = s.days || [2, 4]; s.hol = s.hol || [];
   return s;
@@ -415,11 +461,11 @@ function seasonWeeks() {
   return out;
 }
 function viewSeason() {
-  const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date()));
-  const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!s.team || t.team === s.team)) (byDate[t.date] = byDate[t.date] || []).push(t); });
-  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : 'Wochenplan nach RTP', ctxBar()) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
+  const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date())), tm = teamById(S.sTeam);
+  const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!tm || (teamOf(t) || {}).id === tm.id)) (byDate[t.date] = byDate[t.date] || []).push(t); });
+  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : tm ? `Wochenplan · ${esc(tm.name)}` : 'Wochenplan nach RTP', ctxBar()) + (S.flow ? '' : seg('season')) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
     <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Start (RTP-Woche 1)<input type="date" data-b="s:start" data-r="1" value="${esc(s.start)}"></label></div>
-    <div class="grid2"><label>Team<input data-b="s:team" list="teams" value="${esc(s.team || '')}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label></div>
+    <div class="grid2"><label>Mannschaft<select data-b="s:team" data-r="1">${opt('', 'Ohne Mannschaft', S.sTeam)}${DB.teams.map(x => opt(x.id, x.name, S.sTeam)).join('')}</select></label><label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label></div>
     <div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
     <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'}</p></details>
   ${seasonWeeks().map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
@@ -433,7 +479,41 @@ function seasonCreate(st, b, w, idx, date) {
   const s = seasonCfg();
   const t = st.slots && !(w && w.trainings[idx]) ? newTraining({ stage: st.id, date, ef: b.main.ef, sp: b.main.sp, ziel: b.main.ziel, rtp: { stage: st.id, block: b.nr, week: w ? w.w : 0, idx }, title: `${st.id} · Block ${b.nr} · Zusatztraining` })
     : trainingFromRtp(st.id, b.nr, w ? w.w : 0, idx, date);
-  t.team = s.team || ''; t.start = s.time || ''; save(); return t;
+  const tm = teamById(S.sTeam); if (tm) applyTeam(t, tm); if (s.time) t.start = s.time; save(); return t;
+}
+
+// ---------- Ansichten: Mannschaften ----------
+const teamInfo = tm => [(stageById(tm.stage) || {}).name, tm.ort, tm.days && tm.days.length ? [...tm.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => WD[d]).join(', ') + (tm.time ? ' ab ' + tm.time : '') : tm.time && 'ab ' + tm.time, tm.min && tm.min + ' Min.'].filter(Boolean);
+function viewTeams() {
+  const today = iso(new Date());
+  return head('Mannschaften', null, `<a class="btn pri" href="#/team/new">+ Neu</a>`, 'Jede Mannschaft hat ihren eigenen Trainingsplan') + doneBar('/teams') + (DB.teams.length ? DB.teams.map(tm => {
+    const ts = teamTrainings(tm), next = ts.filter(t => t.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+    return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
+  }).join('') : `<div class="card empty"><h2>Noch keine Mannschaft</h2><p>Lege deine Mannschaft an (Name, Stufe, Farbe, Ort, Trainingstage). Dann planst du ihre Trainings und die Saison direkt dort und siehst sie im Kalender in ihrer Farbe.</p><p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></p></div>`);
+}
+function viewTeam(id) {
+  const tm = teamById(id); if (!tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
+  const today = iso(new Date()), all = teamTrainings(tm).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '')), up = all.filter(t => !t.date || t.date >= today), past = all.filter(t => t.date && t.date < today).reverse();
+  const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
+  return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
+  <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Vorgaben für neue Trainings</div><p class="nomargin">${esc(teamInfo(tm).join(' · ') || 'keine')}</p></div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison / Block planen</button></div>
+  <h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen» oder «Saison / Block planen».</p>'}
+  ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
+}
+function viewTeamForm(id) {
+  const tm = id ? teamById(id) : null;
+  if (id && !tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
+  if (!S.mf || S.mf.key !== (id || 'new')) S.mf = tm ? { ...JSON.parse(JSON.stringify(tm)), key: id } : { key: 'new', id: null, name: '', stage: DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: (stageById(DB.stage) || R.stages[0]).minutes };
+  const f = S.mf, n = tm ? teamTrainings(tm).length : 0;
+  return head(tm ? 'Mannschaft bearbeiten' : 'Neue Mannschaft', tm ? '/team/' + tm.id : '/teams', '', tm ? esc(tm.name) : 'Name, Stufe und Vorgaben festlegen') + `<div class="card">
+    <label>Name<input data-b="m:name" value="${esc(f.name)}" placeholder="z.B. D2-Junioren"></label>
+    <div class="grid2"><label>Stufe (RTP)<select data-b="m:stage" data-r="1">${stageOpts(f.stage)}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="m:min" value="${esc(f.min || '')}" placeholder="aus RTP"></label></div>
+    <div class="small muted" style="margin-top:10px">Farbe</div><div class="chips">${TEAM_COLORS.map(c => `<button class="chip swatch ${f.color === c ? 'sel' : ''}" style="--c:${c};background:${c}" data-a="mColor" data-k="${c}" aria-label="Farbe ${c}"></button>`).join('')}</div>
+    <div class="grid2"><label>Ort / Halle<input data-b="m:ort" value="${esc(f.ort)}" placeholder="Halle"></label><label>Startzeit<input type="time" data-b="m:time" value="${esc(f.time)}"></label></div>
+    <div class="small muted" style="margin-top:10px">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${f.days.includes(d) ? 'sel' : ''}" data-a="mDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
+    <p class="small muted">Diese Vorgaben füllen neue Trainings und die Saisonplanung der Mannschaft vor.</p>
+    <button class="btn pri block" data-a="saveTeam">Speichern</button>${tm ? `<button class="btn danger block" data-a="delTeam" data-id="${tm.id}">Mannschaft löschen${n ? ` (${n} Trainings)` : ''}</button>` : ''}</div>`;
 }
 
 // ---------- Ansicht: Mehr ----------
@@ -467,35 +547,37 @@ const slim = t => { const c = JSON.parse(JSON.stringify(t)); c.items.forEach(i =
 const download = (name, obj) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj)], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
 const appUrl = () => location.origin + location.pathname;
 async function shareTraining(t) {
-  const url = appUrl() + '#i=' + await pack({ v: 1, t: [slim(t)] });
+  const tm = teamOf(t), m = tm ? [tm] : [], url = appUrl() + '#i=' + await pack({ v: 1, t: [slim(t)], m });
   let qr = '';
   try { const q = qrcode(0, 'L'); q.addData(url, 'Byte'); q.make(); qr = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch (e) { qr = '<p class="small muted">Für einen QR-Code ist dieses Training zu umfangreich – nutze den Link oder die Datei.</p>'; }
-  S.share = { url, t };
+  S.share = { url, t, m };
   modal(`<h2>«${esc(t.title)}» teilen</h2><p class="small">Die Empfängerin öffnet den Link oder scannt den Code – das Training wird in ihre App importiert. Es findet keine laufende Synchronisation statt; bei Änderungen einfach nochmals teilen.</p>
     <div class="qr">${qr}</div><div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
 }
 function importData(d) {
   if (!d || !Array.isArray(d.t)) { toast('Keine gültigen Trainingsdaten'); return; }
   S.imp = d;
-  const dup = d.t.filter(t => getT(t.id)).length;
+  const dup = d.t.filter(t => getT(t.id)).length, meta = {}; (d.m || []).forEach(m => { if (m && m.id) meta[m.id] = m; });
+  const newTm = [...new Set(d.t.map(t => String(t.team || (meta[t.teamId] || {}).name || '').trim()).filter(n => n && !teamByName(n)))];
   modal(`<h2>Importieren?</h2><ul>${d.t.slice(0, 12).map(t => `<li>${esc(t.title)}${t.date ? ` <span class="muted small">${fmtDate(t.date)}</span>` : ''}</li>`).join('')}${d.t.length > 12 ? `<li>… und ${d.t.length - 12} weitere</li>` : ''}</ul>
-    ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
+    ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${newTm.length ? `<p class="small">Neue Mannschaft${newTm.length > 1 ? 'en' : ''} wird angelegt: ${newTm.map(n => '«' + esc(n) + '»').join(', ')}</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
     <div class="row"><button class="btn pri" data-a="impOk">Importieren</button><button class="btn" data-a="close">Abbrechen</button></div>`);
 }
 function doImport() {
   const d = S.imp; S.imp = null;
-  for (const t of d.t) { if (!t.id || !Array.isArray(t.items)) continue; const i = DB.trainings.findIndex(x => x.id === t.id); if (i >= 0) DB.trainings[i] = t; else DB.trainings.push(t); }
+  const meta = {}; (d.m || []).forEach(m => { if (m && m.id && m.name) { meta[m.id] = m; if (!teamById(m.id) && !teamByName(m.name)) { const n = mkTeam(m.name, m.stage); Object.assign(n, { color: m.color || n.color, ort: m.ort || '', time: m.time || '', days: Array.isArray(m.days) ? m.days : n.days, min: +m.min || 0, id: m.id }); } } });
+  for (const t of d.t) { if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta); const i = DB.trainings.findIndex(x => x.id === t.id); if (i >= 0) DB.trainings[i] = t; else DB.trainings.push(t); }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
   LIB = null; flush(); closeModal(); toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
 }
 
 // ---------- Router ----------
-const NEWV = () => head('Neues Training', '/', '', 'Wie möchtest du starten?') + `<div class="col">
+const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Ort, Startzeit und Stufe werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
   <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
   <button class="card choice" data-a="flow" data-k="season"><b>📅 Über die Saisonplanung</b><span class="small muted">Du siehst den Wochenplan und legst Trainings direkt auf einen Tag.</span></button>
   <button class="card choice" data-a="flow" data-k="blank"><b>✏️ Leeres Training</b><span class="small muted">Ohne Vorlage: du fügst Blöcke selbst hinzu, auch aus der Bibliothek.</span></button></div>`;
-const NAV = [['/', 'Trainings', '📋'], ['/lib', 'Bibliothek', '📚'], ['/rtp', 'RTP', '🗺️'], ['/season', 'Saison', '📅'], ['/more', 'Mehr', '⋯']];
+const NAV = [['/', 'Trainings', '📋'], ['/teams', 'Teams', '👥'], ['/lib', 'Bibliothek', '📚'], ['/rtp', 'RTP', '🗺️'], ['/more', 'Mehr', '⋯']];
 function render() {
   const h = location.hash.slice(1) || '/';
   if (h.startsWith('i=')) { unpack(h.slice(2)).then(importData).catch(() => toast('Link konnte nicht gelesen werden')); history.replaceState(null, '', location.pathname + '#/'); return render(); }
@@ -503,9 +585,13 @@ function render() {
   let html = '', tab = '/' + (p[0] || ''), run = false;
   if (S.flow && !(S.flow.k === 'rtp' && ['rtp', 'new'].includes(p[0])) && !(S.flow.k === 'season' && ['season', 'new'].includes(p[0]))) S.flow = null;
   if (S.pick && p[0] !== 'lib') S.pick = null;
+  if (!S.flow && p[0] !== 'new') S.seed = { team: '', date: '' };
+  if (p[0] !== 'team') S.mf = null;
   if (S.done && S.done.h !== '/' + p.map(encodeURIComponent).join('/')) S.done = null;
   if (!p.length) html = viewHome();
   else if (p[0] === 'new') { html = NEWV(); tab = '/'; }
+  else if (p[0] === 'teams') html = viewTeams();
+  else if (p[0] === 'team') html = p[1] === 'new' ? viewTeamForm() : p[2] === 'edit' ? viewTeamForm(p[1]) : viewTeam(p[1]);
   else if (p[0] === 't') {
     const t = getT(p[1]); tab = '/';
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
@@ -520,6 +606,8 @@ function render() {
   } else if (p[0] === 'season') html = viewSeason();
   else if (p[0] === 'more') html = viewMore();
   else html = viewHome();
+  if (tab === '/season') tab = '/';
+  if (tab === '/team') tab = '/teams';
   if (!run && S.run) { S.run = null; wakeLock(false); }
   document.body.classList.toggle('running', run);
   $('#app').innerHTML = html;
@@ -534,11 +622,34 @@ addEventListener('hashchange', render);
 const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
 const A = {
   close: closeModal,
-  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k }; go(k === 'rtp' ? '/rtp' : '/season'); },
-  flowCancel() { S.flow = null; go('/'); },
+  newT(el) { S.seed = { team: el.dataset.team || '', date: el.dataset.date || '' }; go('/new'); },
+  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k, ...S.seed }; const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.sTeam = tm.id; save(); } go(k === 'rtp' ? '/rtp' : '/season'); },
+  flowCancel() { S.flow = null; S.seed = { team: '', date: '' }; go('/'); },
+  mColor(el) { S.mf.color = el.dataset.k; document.querySelectorAll('[data-a=mColor]').forEach(b => b.classList.toggle('sel', b === el)); },
+  mDay(el) { const f = S.mf, k = +el.dataset.k; f.days = f.days.includes(k) ? f.days.filter(x => x !== k) : [...f.days, k]; el.classList.toggle('sel'); },
+  teamSeason(el) { S.sTeam = el.dataset.k; render.seasonScrolled = false; go('/season'); },
+  saveTeam() {
+    const f = S.mf, name = f.name.trim(); if (!name) return toast('Bitte einen Namen eingeben');
+    if (DB.teams.some(x => x.id !== f.id && x.name.trim().toLowerCase() === name.toLowerCase())) return toast('Diese Mannschaft gibt es schon');
+    const vals = { name, stage: f.stage, color: f.color, ort: f.ort.trim(), days: [...f.days], time: f.time || '', min: +f.min || 0 }; let tm;
+    if (f.id) { tm = teamById(f.id); const mine = teamTrainings(tm); Object.assign(tm, vals); mine.forEach(t => setTeam(t, tm)); }
+    else { tm = { id: uid(), ...vals }; DB.teams.push(tm); }
+    S.mf = null; save(); done(f.id ? `Mannschaft «${name}» gespeichert.` : `Mannschaft «${name}» angelegt – plane jetzt ihr erstes Training.`, `/team/${tm.id}`);
+  },
+  delTeam(el) {
+    const tm = teamById(el.dataset.id), n = teamTrainings(tm).length;
+    modal(`<h2>«${esc(tm.name)}» löschen?</h2><p>${n ? `Die Mannschaft hat ${n} Training${n > 1 ? 's' : ''}. Was soll damit geschehen?` : 'Die Mannschaft hat keine Trainings.'}</p><div class="col"><button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="keep">Nur die Mannschaft löschen${n ? ' – Trainings bleiben, ohne Mannschaft' : ''}</button>${n ? `<button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="all">Mannschaft und ${n} Training${n > 1 ? 's' : ''} löschen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div><p class="small muted">Direkt danach kannst du es noch rückgängig machen.</p>`);
+  },
+  delTeamDo(el) {
+    closeModal(); const tm = teamById(el.dataset.id), mine = teamTrainings(tm), prev = mine.map(t => [t, t.team, t.teamId]), cfg = DB.seasons[tm.id], idx = DB.teams.indexOf(tm), all = el.dataset.m === 'all';
+    DB.teams.splice(idx, 1); delete DB.seasons[tm.id];
+    if (all) { const ids = new Set(mine.map(t => t.id)); DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); } else mine.forEach(t => setTeam(t, null));
+    if (S.team === tm.id) S.team = ''; if (S.sTeam === tm.id) S.sTeam = ''; save(); go('/teams');
+    toast(all ? `«${tm.name}» und ${mine.length} Trainings gelöscht` : `«${tm.name}» gelöscht – ${mine.length} Trainings bleiben ohne Mannschaft`, 'Rückgängig', () => { DB.teams.splice(idx, 0, tm); if (cfg) DB.seasons[tm.id] = cfg; if (all) DB.trainings.push(...mine); else prev.forEach(([t, tn, ti]) => { t.team = tn; t.teamId = ti; }); save(); render(); });
+  },
   pickCancel() { const id = S.pick; S.pick = null; go(id && getT(id) ? `/t/${id}` : '/'); },
   doneX() { S.done = null; render(); },
-  blankT() { const t = newTraining({}); done('Leeres Training angelegt – gib ihm einen Titel und füge Blöcke hinzu.', `/t/${t.id}`); },
+  blankT() { const f = { ...S.seed, ...(S.flow || {}) }, tm = teamById(f.team), t = newTraining(tm ? { stage: tm.stage, min: +tm.min || stageById(tm.stage).minutes } : {}); applyFlow(t); S.flow = null; done('Leeres Training angelegt – gib ihm einen Titel und füge Blöcke hinzu.', `/t/${t.id}`); },
   tog(el) { const id = el.dataset.id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); render(); },
   togAll() { const t = curT(), all = t.items.every(i => S.open.has(i.id)); t.items.forEach(i => all ? S.open.delete(i.id) : S.open.add(i.id)); render(); },
   mv(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= t.items.length) return; [t.items[i], t.items[j]] = [t.items[j], t.items[i]]; touch(t); render(); },
@@ -569,7 +680,7 @@ const A = {
     S.flow = null; done(`${n} Trainings erstellt (${st.id} · Block ${b.nr}) – hier in der Liste.`, '/');
   },
   sBlock(el) {
-    const s = seasonCfg(), have = new Set(DB.trainings.filter(t => !s.team || t.team === s.team).map(t => t.date)); let n = 0;
+    const s = seasonCfg(), have = new Set(DB.trainings.filter(t => !S.sTeam || (teamOf(t) || {}).id === S.sTeam).map(t => t.date)); let n = 0;
     seasonWeeks().forEach(r => { if (r.b && r.b.nr === +el.dataset.k) r.days.forEach(d => { if (!have.has(d.date)) { seasonCreate(stageById(s.stage), r.b, r.w, d.idx, d.date); n++; } }); });
     toast(n ? `${n} Trainings geplant` : 'Alle Trainings dieses Blocks sind schon geplant'); render();
   },
@@ -577,9 +688,9 @@ const A = {
   print() { print(); },
   shNative() { const { url, t } = S.share; if (navigator.share) navigator.share({ title: t.title, text: 'Unihockey-Training: ' + t.title, url }).catch(() => { }); else A.shCopy(); },
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
-  shFile() { download(`training-${norm(S.share.t.title).replace(/ /g, '-')}.json`, { v: 1, t: [S.share.t] }); },
+  shFile() { download(`training-${norm(S.share.t.title).replace(/ /g, '-')}.json`, { v: 1, t: [S.share.t], m: S.share.m }); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
-  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes }); },
+  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams }); },
   impFile() { $('#file').click(); },
   impOk: doImport,
   install() { installEvt && installEvt.prompt(); installEvt = null; },
@@ -598,8 +709,8 @@ const A = {
   saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) Object.assign(DB.custom.find(x => x.id === f.id), f); else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
-  fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
-  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
+  fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
+  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
   sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
   runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
@@ -618,7 +729,8 @@ function onInput(ev) {
   const el = ev.target.closest('[data-b]'); if (!el) return;
   const [k, a, b] = el.dataset.b.split(':'), v = el.type === 'number' ? (el.value === '' ? '' : +el.value) : el.value;
   const rer = el.dataset.r && ev.type === 'change';
-  if (k === 't') { const t = curT(); t[a] = v; touch(t); if (a === 'min') $('#sum').innerHTML = sumHtml(t); }
+  if (k === 't' && a === 'teamId') { const t = curT(), tm = teamById(v); if (v === '__txt') return; if (tm) applyTeam(t, tm); else setTeam(t, null); touch(t); }
+  else if (k === 't') { const t = curT(); t[a] = v; touch(t); if (a === 'min') $('#sum').innerHTML = sumHtml(t); }
   else if (k === 'i' || k === 'g') {
     const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
@@ -626,6 +738,9 @@ function onInput(ev) {
   }
   else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
+  else if (k === 'f') { S.seed[a] = v; return; }
+  else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.min = stageById(v).minutes; if (a === 'min') f.minEdited = 1; }
+  else if (k === 's' && a === 'team') { S.sTeam = v; render.seasonScrolled = false; render(); return; }
   else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
   else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
   if (rer) render();
