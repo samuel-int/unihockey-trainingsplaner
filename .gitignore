@@ -1,0 +1,4 @@
+# Quelldateien von swiss unihockey bleiben lokal (werden nur für tools/build-rtp.js gebraucht)
+*.xlsx
+*.pdf
+.claude/settings.local.json

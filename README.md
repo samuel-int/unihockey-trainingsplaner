@@ -1,0 +1,35 @@
+# Unihockey Trainingsplaner (Web-App)
+
+Trainings nach den Rahmentrainingsplänen (RTP) von swiss unihockey planen – mit Goalie-Spur,
+Hallenmodus, Saisonplanung und Teilen per Link/QR/Datei. Kein Login, kein Server: alle Daten
+liegen lokal im Browser des jeweiligen Geräts.
+
+## Ordner
+
+- `app/` – die fertige App (statische Dateien). **Nur dieser Ordner wird veröffentlicht.**
+- `tools/build-rtp.js` – liest die `Rahmentrainingsplaene_*.xlsx` in diesem Ordner und erzeugt `app/data-rtp.js`.
+  Nach einem RTP-Update: neue Excel-Datei hier ablegen und `node tools/build-rtp.js` ausführen.
+- `tools/serve.js` – lokaler Testserver: `node tools/serve.js` → http://localhost:5173
+- `app/data-goalie.js` – Goalie-Übungen und Goalie-Ausbildung pro Stufe (eigene Ergänzung, frei editierbar).
+
+## Aufs Handy bringen (gratis, ohne eigenen Server)
+
+Die App liegt auf GitHub Pages: **https://samuel-int.github.io/unihockey-trainingsplaner/**
+
+Jeder Push auf den Branch `main` stellt den Ordner `app/` automatisch neu online
+(`.github/workflows/pages.yml`). Die Excel- und PDF-Quelldateien bleiben lokal (`.gitignore`).
+
+Für Änderungen an der App gibt es den Claude-Code-Agenten `trainingsplaner-wartung`
+(`.claude/agents/trainingsplaner-wartung.md`).
+
+Die Adresse auf dem Handy öffnen:
+- Android (Chrome): Menü ⋮ → «App installieren»
+- iPhone (Safari): Teilen → «Zum Home-Bildschirm»
+
+Andere Trainer*innen bekommen einfach dieselbe Adresse. Trainings teilt man in der App über «Teilen».
+
+## Hinweis zu den Inhalten
+
+Schwerpunkte, Ausbildungsziele und Namen der Trainingsformen stammen aus den RTP von swiss unihockey.
+Beschreibungen/Skizzen/Videos der Trainingsformen sind nicht enthalten (die gibt es im UTP); in der App
+kann man pro Übung eigene Notizen erfassen.
