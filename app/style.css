@@ -104,3 +104,9 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 
 /* Material */
 .matcard { border-left: 4px solid var(--gfg); } .matnone { margin: 6px 2px; }
+
+/* Erklärung (UTP-Text) */
+.expl { border-top: 1px solid var(--line); margin-top: 8px; } .expl > summary { font-weight: 600; } .exb p { margin: 4px 0; } .exb ul { margin: 4px 0; padding-left: 20px; } .exb li.sub { margin-left: 16px; list-style: circle; }
+.exh { font-weight: 700; margin-top: 12px; } .exh2 { font-weight: 600; font-size: .9rem; color: var(--muted); margin-top: 8px; }
+.run .exb p, .run .exb li { font-size: 1.05rem; }
+@media print { .expl { display: none; } }

@@ -2,3 +2,6 @@
 *.xlsx
 *.pdf
 .claude/settings.local.json
+
+# lokaler Zwischenstand von tools/build-utp.js
+tools/.utp-cache.json

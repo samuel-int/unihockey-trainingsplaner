@@ -32,5 +32,8 @@ Andere Trainer*innen bekommen einfach dieselbe Adresse. Trainings teilt man in d
 ## Hinweis zu den Inhalten
 
 Schwerpunkte, Ausbildungsziele und Namen der Trainingsformen stammen aus den RTP von swiss unihockey.
-Beschreibungen/Skizzen/Videos der Trainingsformen sind nicht enthalten (die gibt es im UTP); in der App
-kann man pro Übung eigene Notizen erfassen.
+Die Übungstexte (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem
+Unihockey-Trainingsplaner (UTP) von swiss unihockey: **© swiss unihockey, Verwendung mit Einverständnis,
+nur nicht-kommerziell** (die App darf nicht monetarisiert werden). Sie stehen in `app/data-utp.js`, erzeugt mit
+`node tools/build-utp.js` (holt jede in den RTP verlinkte Übung einmal, ca. 300 ms Pause, Zwischenstand in
+`tools/.utp-cache.json`; speichert keine Bilder, Videos oder Personendaten). Skizzen und Videos gibt es im UTP (Link in der App).
