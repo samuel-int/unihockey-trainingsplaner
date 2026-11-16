@@ -31,6 +31,7 @@ const efColor = ef => (EFC.find(([re]) => re.test(norm(ef))) || [0, '#6b7785'])[
 
 // ---------- Datum ----------
 const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const WDL = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const pd = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -179,7 +180,7 @@ function itemFromLib(e, t) {
 function toast(msg, act, fn) { const el = $('#toast'); el.innerHTML = esc(msg) + (act ? ` <button data-a="toastAct">${esc(act)}</button>` : ''); toast.fn = fn; el.className = act ? 'on act' : 'on'; clearTimeout(toast.t); toast.t = setTimeout(() => el.className = '', act ? 7000 : 2400); }
 const teamDot = tm => `<span class="dot" style="background:${esc(tm.color)}"></span>`;
 const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && (tm || t.team) ? `${tm ? teamDot(tm) : ''}<b>${esc(tm ? tm.name : t.team)}</b> · ` : ''}${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}`; };
-const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/season', 'Saison', 'season']].map(([h, l, k]) => `<a href="#${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
+const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/cal', 'Kalender', 'cal'], ['/season', 'Saison', 'season']].map(([h, l, k]) => `<a href="#${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
 const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
 function removeTrainings(list) {
@@ -482,6 +483,26 @@ function seasonCreate(st, b, w, idx, date) {
   const tm = teamById(S.sTeam); if (tm) applyTeam(t, tm); if (s.time) t.start = s.time; save(); return t;
 }
 
+// ---------- Ansicht: Kalender ----------
+function viewCal() {
+  const now = new Date(), todayIso = iso(now);
+  const c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth(), day: todayIso, team: '' });
+  if (c.team && !teamById(c.team)) c.team = '';
+  const byDate = {}; DB.trainings.forEach(t => { if (!t.date) return; const tm = teamOf(t); if (c.team && (!tm || tm.id !== c.team)) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
+  const first = new Date(c.y, c.m, 1), start = monday(first), weeks = Math.ceil(((first.getDay() + 6) % 7 + new Date(c.y, c.m + 1, 0).getDate()) / 7);
+  const cells = []; for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(start, i), k = iso(d), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color);
+    cells.push(`<button class="cal-d ${d.getMonth() !== c.m ? 'oth' : ''} ${k === todayIso ? 'today' : ''} ${k === c.day ? 'sel' : ''}" data-a="calDay" data-d="${k}" aria-label="${WDL[d.getDay()]}, ${dm(d)}${ts.length ? ', ' + ts.length + ' Training' + (ts.length > 1 ? 's' : '') : ''}"><span class="n">${d.getDate()}</span><span class="dots">${cols.slice(0, 3).map(col => `<i style="background:${esc(col)}"></i>`).join('')}${cols.length > 3 ? `<b>+${cols.length - 3}</b>` : ''}</span></button>`);
+  }
+  const day = c.day ? pd(c.day) : null, dts = day ? (byDate[c.day] || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')) : [];
+  const card = t => { const tm = teamOf(t); return `<a class="card tcard item" style="--c:${esc(tm ? tm.color : '#6b7785')}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${tm ? teamDot(tm) + '<b>' + esc(tm.name) + '</b> · ' : ''}${[t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ') || 'ohne Uhrzeit'}</div></a>`; };
+  return head('Kalender', null, `<button class="btn" data-a="calToday">Heute</button>`, 'Monatsübersicht der Trainings') + seg('cal') + `
+  ${DB.teams.length ? `<div class="chips"><button class="chip ${c.team ? '' : 'sel'}" data-a="calTeam" data-k="">Alle Mannschaften</button>${DB.teams.map(x => `<button class="chip ${c.team === x.id ? 'sel' : ''}" data-a="calTeam" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
+  <div class="row calnav"><button class="btn" data-a="calNav" data-d="-1" aria-label="Voriger Monat">‹</button><b class="grow center">${MONTHS[c.m]} ${c.y}</b><button class="btn" data-a="calNav" data-d="1" aria-label="Nächster Monat">›</button></div>
+  <div class="cal"><div class="cal-h">${[1, 2, 3, 4, 5, 6, 0].map(d => `<span>${WD[d]}</span>`).join('')}</div><div class="cal-g">${cells.join('')}</div></div>
+  ${day ? `<h2>${WDL[day.getDay()]}, ${dm(day)}${day.getFullYear()}</h2>${dts.map(card).join('') || '<p class="muted">An diesem Tag ist kein Training geplant.</p>'}<button class="btn pri block" data-a="newT" data-team="${esc(c.team)}" data-date="${c.day}">+ Training an diesem Tag</button>` : '<p class="muted small center">Tippe auf einen Tag, um seine Trainings zu sehen oder eines anzulegen.</p>'}`;
+}
+
 // ---------- Ansichten: Mannschaften ----------
 const teamInfo = tm => [(stageById(tm.stage) || {}).name, tm.ort, tm.days && tm.days.length ? [...tm.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => WD[d]).join(', ') + (tm.time ? ' ab ' + tm.time : '') : tm.time && 'ab ' + tm.time, tm.min && tm.min + ' Min.'].filter(Boolean);
 function viewTeams() {
@@ -497,7 +518,7 @@ function viewTeam(id) {
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Vorgaben für neue Trainings</div><p class="nomargin">${esc(teamInfo(tm).join(' · ') || 'keine')}</p></div>
-  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison / Block planen</button></div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison / Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button></div>
   <h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen» oder «Saison / Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
@@ -590,6 +611,7 @@ function render() {
   if (S.done && S.done.h !== '/' + p.map(encodeURIComponent).join('/')) S.done = null;
   if (!p.length) html = viewHome();
   else if (p[0] === 'new') { html = NEWV(); tab = '/'; }
+  else if (p[0] === 'cal') html = viewCal();
   else if (p[0] === 'teams') html = viewTeams();
   else if (p[0] === 'team') html = p[1] === 'new' ? viewTeamForm() : p[2] === 'edit' ? viewTeamForm(p[1]) : viewTeam(p[1]);
   else if (p[0] === 't') {
@@ -606,7 +628,7 @@ function render() {
   } else if (p[0] === 'season') html = viewSeason();
   else if (p[0] === 'more') html = viewMore();
   else html = viewHome();
-  if (tab === '/season') tab = '/';
+  if (tab === '/season' || tab === '/cal') tab = '/';
   if (tab === '/team') tab = '/teams';
   if (!run && S.run) { S.run = null; wakeLock(false); }
   document.body.classList.toggle('running', run);
@@ -622,6 +644,10 @@ addEventListener('hashchange', render);
 const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
 const A = {
   close: closeModal,
+  calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
+  calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
+  calDay(el) { const c = S.cal, d = pd(el.dataset.d); c.day = el.dataset.d; c.y = d.getFullYear(); c.m = d.getMonth(); render(); },
+  calTeam(el) { S.cal = S.cal || {}; if (S.cal.y === undefined) { const n = new Date(); Object.assign(S.cal, { y: n.getFullYear(), m: n.getMonth(), day: iso(n) }); } S.cal.team = el.dataset.k; if (location.hash !== '#/cal') go('/cal'); else render(); },
   newT(el) { S.seed = { team: el.dataset.team || '', date: el.dataset.date || '' }; go('/new'); },
   flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k, ...S.seed }; const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.sTeam = tm.id; save(); } go(k === 'rtp' ? '/rtp' : '/season'); },
   flowCancel() { S.flow = null; S.seed = { team: '', date: '' }; go('/'); },
