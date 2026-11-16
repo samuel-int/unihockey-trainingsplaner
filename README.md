@@ -37,3 +37,9 @@ Unihockey-Trainingsplaner (UTP) von swiss unihockey: **© swiss unihockey, Verwe
 nur nicht-kommerziell** (die App darf nicht monetarisiert werden). Sie stehen in `app/data-utp.js`, erzeugt mit
 `node tools/build-utp.js` (holt jede in den RTP verlinkte Übung einmal, ca. 300 ms Pause, Zwischenstand in
 `tools/.utp-cache.json`; speichert keine Bilder, Videos oder Personendaten). Skizzen und Videos gibt es im UTP (Link in der App).
+
+## Dokumentation für Agenten
+
+Aufbau, Datenmodell, Arbeitsablauf und Bedienung stehen in Samuels LLM Wiki
+(`C:\Users\leimg\OneDrive\Sämi\LLM Wiki`, Seiten `wiki/verein/*trainingsplaner*.md`),
+dort liegt unter `tools/trainingsplaner/` auch eine Kopie dieses Codes. Massgebend ist dieser Ordner.
