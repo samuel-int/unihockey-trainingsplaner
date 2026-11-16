@@ -42,7 +42,16 @@ function readBook(file) {
   const names = [...z['xl/workbook.xml']().matchAll(/<sheet [^>]*name="([^"]*)"/g)].map(m => dec(m[1]));
   return names.map((name, i) => {
     const xml = z[`xl/worksheets/sheet${i + 1}.xml`]();
-    const g = {}; let maxR = 0;
+    const g = {}, lk = {}; let maxR = 0;
+    const relXml = z[`xl/worksheets/_rels/sheet${i + 1}.xml.rels`], rels = {};
+    if (relXml) for (const m of relXml().matchAll(/<Relationship\b[^>]*>/g)) {
+      const id = (m[0].match(/\bId="([^"]*)"/) || [])[1], tg = (m[0].match(/\bTarget="([^"]*)"/) || [])[1];
+      if (id && tg && /relationships\/hyperlink"/.test(m[0]) && /TargetMode="External"/.test(m[0])) rels[id] = dec(tg);
+    }
+    for (const m of xml.matchAll(/<hyperlink\b[^>]*>/g)) {   // ref="K4" oder ref="I4:I5" (Bereich: Verweis gilt für die erste Zelle)
+      const id = (m[0].match(/r:id="([^"]*)"/) || [])[1], ref = m[0].match(/\bref="([A-Z]+)(\d+)/);
+      if (id && rels[id] && ref) lk[+ref[2] + ':' + colNum(ref[1])] = rels[id];
+    }
     for (const r of xml.matchAll(/<row [^>]*?r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
       for (const c of r[2].matchAll(/<c r="([A-Z]+)\d+"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
         if (!c[3]) continue;
@@ -55,13 +64,30 @@ function readBook(file) {
     for (const m of xml.matchAll(/<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/g)) {
       const c1 = colNum(m[1]), r1 = +m[2], c2 = colNum(m[3]), r2 = +m[4];
       const v = g[r1] && g[r1][c1]; if (!v) continue;
-      for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) (g[r] = g[r] || {})[c] = v;
+      for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) { (g[r] = g[r] || {})[c] = v; if (lk[r1 + ':' + c1] && !lk[r + ':' + c]) lk[r + ':' + c] = lk[r1 + ':' + c1]; }
       maxR = Math.max(maxR, r2);
     }
-    return { name, g, maxR, cell: (r, c) => (g[r] && g[r][typeof c === 'string' ? colNum(c) : c]) || '' };
+    return { name, g, maxR, cell: (r, c) => (g[r] && g[r][typeof c === 'string' ? colNum(c) : c]) || '', link: (r, c) => lk[r + ':' + (typeof c === 'string' ? colNum(c) : c)] || '' };
   });
 }
 
+// ---------- Links (Hyperlinks der Zellen) ----------
+// Die Namen der Trainingsformen sind in den Excel-Dateien Hyperlinks auf die Übung im UTP. Es wird nur die Adresse gespeichert,
+// nie der Inhalt (Beschreibung, Skizze, Video) – der gehört swiss unihockey.
+const UTP_BASE = 'https://utp.swissunihockey.ch/guest/exercises/';
+const normName = s => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();   // wie norm() in app.js
+const LINKS = {}, SL = {}, STATS = {};   // normName -> Adresse (ohne UTP_BASE); STATS[stufe] = { forms:Set, linked:Set }
+let curStage = '';
+function reg(name, url) {
+  const k = normName(name); if (!k) return;
+  const s = STATS[curStage] = STATS[curStage] || { forms: new Set(), linked: new Set(), conflicts: 0 };
+  s.forms.add(k);
+  if (!url || !url.startsWith(UTP_BASE)) return;
+  const rel = url.slice(UTP_BASE.length); s.linked.add(k);
+  const sl = SL[curStage] = SL[curStage] || {};   // pro Stufe: erster Link zu diesem Namen
+  if (!sl[k]) sl[k] = rel; else if (sl[k] !== rel) s.conflicts++;
+  if (!LINKS[k]) LINKS[k] = rel;
+}
 const blockNr = s => +(String(s).match(/(\d+)/) || [0, 0])[1];
 const splitEvents = s => clean(s).split(/[;\n]/).map(x => x.trim()).filter(Boolean);
 const one = s => clean(s).replace(/\n/g, ' ');
@@ -92,6 +118,7 @@ function parseMikro(sh) {
     const t = {};
     for (const s of slots) {
       let v = one(sh.cell(r, s.col));
+      if (v && !/Athletik/.test(s.label)) reg(v, sh.link(r, s.col));
       if (!v && /^Warm-up$/i.test(s.label)) v = last[s.key] || '';   // "Swiss Way Warm-up" gilt für den ganzen Block
       if (v) { t[s.key] = v; last[s.key] = v; }
     }
@@ -139,6 +166,7 @@ function parseMeso(sh) {
     }
     for (const i of [1, 2]) {
       const v = col['gp' + i] && one(sh.cell(r, col['gp' + i])), tgt = i === 1 ? cur.main : cur.sec;
+      if (v) reg(v, sh.link(r, col['gp' + i]));
       if (v && tgt && !tgt.gp.includes(v)) tgt.gp.push(v);
     }
   }
@@ -164,6 +192,7 @@ function parseAthletik(sh, blocks) {
     }
     if (/^Woche/.test(d) || !cur || !cur.athletik) continue;
     const form = one(sh.cell(r, 'G')), key = one(sh.cell(r, 'L')); if (!form && !key && !sh.cell(r, 'H')) continue;
+    if (form) reg(form, sh.link(r, 'G'));
     const w = one(sh.cell(r, 'D')) || last.w, t = one(sh.cell(r, 'E')) || last.t, f = one(sh.cell(r, 'F')) || last.f;
     if (!sess || w !== last.w || t !== last.t || f !== last.f) {
       sess = { woche: w, training: t, nums: (t.match(/\d+/g) || []).map(Number), faktor: f, items: [] }; cur.athletik.sessions.push(sess);
@@ -178,6 +207,7 @@ const files = fs.readdirSync(SRC).filter(f => /^Rahmentrainingspl.*\.xlsx$/.test
 const out = { generated: new Date().toISOString().slice(0, 10), efs: {}, hints: [], stages: [] };
 for (const st of STAGES) {
   const f = files.find(x => st.match.test(x)); if (!f) { console.warn('fehlt:', st.id); continue; }
+  curStage = st.id;
   const book = readBook(path.join(SRC, f)), find = re => book.find(s => re.test(s.name));
   const stage = { id: st.id, name: st.name, draft: !!st.draft, source: f, notes: [] };
   const info = find(/EF|Einordnung/);
@@ -201,6 +231,13 @@ for (const st of STAGES) {
   console.log(st.id, stage.blocks.length, 'Blöcke,', stage.blocks.reduce((a, b) => a + b.weeks.reduce((x, w) => x + w.trainings.length, 0), 0), 'Trainings,',
     stage.blocks.filter(b => b.athletik).length, 'Athletikblöcke,', stage.perWeek + 'x' + stage.minutes);
 }
+out.utpBase = UTP_BASE; out.links = LINKS; out.linksBy = {};   // links: Name -> Adresse; linksBy[stufe]: nur dort, wo die Stufe eine andere Adresse für denselben Namen hat
+for (const [id, sl] of Object.entries(SL)) for (const [k, rel] of Object.entries(sl)) if (rel !== LINKS[k]) (out.linksBy[id] = out.linksBy[id] || {})[k] = rel;
+console.log('abweichende Links pro Stufe (gleicher Name, andere Übung im UTP):', Object.entries(out.linksBy).map(([id, m]) => id + ' ' + Object.keys(m).length).join(', '));
+console.log('Trainingsformen (eindeutige Namen) und Links pro Stufe:');
+let tf = new Set(), tl = new Set();
+for (const [id, s] of Object.entries(STATS)) { s.forms.forEach(x => tf.add(x)); s.linked.forEach(x => tl.add(x)); console.log(' ', id, s.forms.size, 'Formen,', s.linked.size, 'mit Link,', s.forms.size - s.linked.size, 'ohne,', s.conflicts, 'Namen mit mehreren Links innerhalb der Stufe'); }
+console.log('  alle Stufen zusammen:', tf.size, 'Formen,', tl.size, 'mit Link');
 out.glossary = {
   'AV': 'Ausbildungsverantwortliche*r',
   'Trainingsbesuch AV': 'Besuch der/des Ausbildungsverantwortlichen im Training',
