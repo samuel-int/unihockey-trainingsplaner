@@ -554,14 +554,15 @@ function seasonCfg() {
   const tm = teamById(S.sTeam); if (!tm) S.sTeam = '';
   return seasonCfgFor(tm);
 }
-// Jede Saison beginnt am 1. Mai. Saisonjahr = Jahr dieses 1. Mai (Januar bis April gehören zur Saison des Vorjahres); S.sYear wählt für diese Sitzung eine andere Saison.
+// Saisonstart: Vorgabe ist der 1. Mai der laufenden Saison (Januar bis April gehören zur Saison des Vorjahres).
+// Ein selbst gewähltes Datum steht in s.startOwn; das alte Feld s.start wurde früher automatisch gefüllt und wird bei jedem Aufruf neu berechnet.
 const seasonYearNow = () => { const n = new Date(); return n.getMonth() >= 4 ? n.getFullYear() : n.getFullYear() - 1; };
-const seasonYear = () => +S.sYear || seasonYearNow();
+const seasonDefault = () => seasonYearNow() + '-05-01';
 function seasonCfgFor(tm) {
   if (tm && !DB.seasons[tm.id]) DB.seasons[tm.id] = { stage: tm.stage, days: [...(tm.days || [2, 4])], time: tm.time || '', hol: [...(DB.season.hol || [])], start: DB.season.start || '' };
   const s = tm ? DB.seasons[tm.id] : DB.season;
   if (tm) s.days = [...new Set(teamSessions(tm).map(x => x.wd))];   // Trainingstage kommen aus den Einheiten der Mannschaft (alte Felder bleiben als Spiegel)
-  s.start = seasonYear() + '-05-01';   // fest: 1. Mai des Saisonjahrs (ein früher gespeicherter Wert wird nicht mehr verwendet)
+  s.start = /^\d{4}-\d{2}-\d{2}$/.test(s.startOwn || '') ? s.startOwn : seasonDefault();
   s.stage = s.stage || DB.stage; s.days = s.days || [2, 4]; s.hol = s.hol || [];
   return s;
 }
@@ -598,7 +599,7 @@ function viewSeason() {
   const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date())), tm = teamById(S.sTeam);
   const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!tm || (teamOf(t) || {}).id === tm.id)) (byDate[t.date] = byDate[t.date] || []).push(t); });
   return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : tm ? `Wochenplan · ${esc(tm.name)}` : 'Wochenplan nach RTP', ctxBar()) + (S.flow ? '' : seg('season')) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${tm ? teamSessions(tm).map(x => WD[x.wd] + (x.time ? ' ' + x.time : '')).join(', ') || 'keine Trainingszeit' : s.days.map(d => WD[d]).join(', ')}</span></summary>
-    <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Saison (Start 1. Mai)<select data-b="s:year" data-r="1">${[seasonYearNow() - 1, seasonYearNow(), seasonYearNow() + 1].map(y => opt(String(y), y + '/' + String(y + 1).slice(2), String(seasonYear()))).join('')}</select></label></div>
+    <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Saisonstart${s.startOwn ? ' (eigenes Datum)' : ' (Vorgabe 1. Mai)'}<input type="date" data-b="s:startOwn" data-r="1" value="${esc(s.start)}"></label></div>
     <div class="grid2"><label>Mannschaft<select data-b="s:team" data-r="1">${opt('', 'Ohne Mannschaft', S.sTeam)}${DB.teams.map(x => opt(x.id, x.name, S.sTeam)).join('')}</select></label>${tm ? '' : `<label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label>`}</div>
     ${tm ? `<div class="small muted">Trainingszeiten von ${esc(tm.name)}</div><p class="nomargin">${teamSessions(tm).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit.'}</p><p class="small"><a href="#/team/${tm.id}/edit">Trainingszeiten bearbeiten</a></p>` : `<div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>`}
     <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'}</p></details>
@@ -996,9 +997,8 @@ function onInput(ev) {
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
   else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
   else if (k === 'ms') { const f = S.mf, x = f.sessions.find(y => y.id === a); if (!x) return; x[b] = b === 'wd' ? +v : v; if (b === 'min') f.minEdited = 1; }
-  else if (k === 's' && a === 'year') { S.sYear = +v; render.seasonScrolled = false; render(); return; }
   else if (k === 's' && a === 'team') { S.sTeam = v; render.seasonScrolled = false; render(); return; }
-  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
+  else if (k === 's') { const s = seasonCfg(); s[a] = v; if (a === 'startOwn' && (!v || v === seasonDefault())) delete s.startOwn; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
   else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
   if (rer) render();
 }
