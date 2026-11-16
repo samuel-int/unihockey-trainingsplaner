@@ -150,7 +150,20 @@ const go = h => { if (location.hash === '#' + h) render(); else location.hash = 
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
 const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
 const stageOpts = (sel, all) => (all ? opt('', 'Alle Stufen', sel) : '') + R.stages.map(s => opt(s.id, s.name, sel)).join('');
-const head = (title, back, right = '') => `<header class="top">${back ? `<a class="back" href="#${back}" aria-label="Zurück">‹</a>` : ''}<h1>${esc(title)}</h1>${right}</header>`;
+const BACKL = h => h === '/' ? 'Trainings' : h === '/lib' ? 'Bibliothek' : h === '/rtp' ? 'RTP' : h === '/season' ? 'Saison' : h === '/more' ? 'Mehr' : h === '/new' ? 'Neu' : /^\/t\//.test(h) ? 'Training' : /^\/rtp\//.test(h) ? 'Block' : /^\/lib\/x/.test(h) ? 'Übung' : 'Zurück';
+// Kopfzeile: Zurück mit Zielname, Titel, optional Untertitel (HTML, selbst escapen), rechts Aktionen, optional Kontextleiste (Ablauf/Auswahl)
+const head = (title, back, right = '', sub = '', bar = '') => `<header class="top"><div class="trow">${back ? `<a class="back" href="#${back}" aria-label="Zurück zu ${esc(BACKL(back))}">‹<span>${esc(BACKL(back))}</span></a>` : ''}<div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
+// Kontextleiste: laufender Ablauf (Neues Training) oder Auswahlmodus (Übung für ein Training) – immer sichtbar und abbrechbar
+function ctxBar(step) {
+  const f = S.flow, pt = S.pick && getT(S.pick);
+  if (pt) return `<div class="ctx"><span class="grow">Übung wählen für <b>${esc(pt.title)}</b></span><button class="btn sm" data-a="pickCancel">Abbrechen</button></div>`;
+  if (!f) return '';
+  const rtp = f.k === 'rtp', n = step === 'train' ? 2 : 1;
+  return `<div class="ctx"><span class="grow"><b>Neues Training${rtp ? ' aus dem RTP' : ' über die Saison'}</b>${flowFor()}<br>${rtp ? `Schritt ${n} von 2: ${n === 1 ? 'Block wählen' : 'Training wählen'}` : 'Tippe bei einem Tag auf «+»'}</span><button class="btn sm" data-a="flowCancel">Abbrechen</button>${rtp ? `<div class="steps"><i class="on"></i><i class="${n === 2 ? 'on' : ''}"></i></div>` : ''}</div>`;
+}
+const flowFor = () => '';
+const doneBar = h => S.done && S.done.h === h ? `<div class="card okbar"><span class="grow">✓ ${esc(S.done.text)}</span><button class="btn sm" data-a="doneX" aria-label="Schliessen">✕</button></div>` : '';
+function done(text, h) { S.done = { text, h }; go(h); }
 
 // ---------- Ansicht: Trainings ----------
 function viewHome() {
@@ -163,12 +176,12 @@ function viewHome() {
   const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#/t/${t.id}">${inner(t)}</a>`; };
   const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
   const gtitle = g => { const t = g[0]; return [t.team, t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
-  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<button class="btn pri" data-a="newT">+ Neu</button>`) + (DB.trainings.length ? `
+  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<a class="btn pri" href="#/new">+ Neu</a>`, '', '') + doneBar('/') + (DB.trainings.length ? `
     ${teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Teams</button>${teams.map(x => `<button class="chip ${f === x ? 'sel' : ''}" data-a="teamF" data-k="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
     ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button></div>` : ''}
     ${[...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('')}` : `
     <div class="card empty"><h2>Willkommen 👋</h2><p>Plane Trainings nach den Rahmentrainingsplänen (RTP) von swiss unihockey – mit eigener Goalie-Spur, Hallenmodus und Saisonplanung. Alles bleibt auf deinem Gerät, ohne Login.</p>
-    <p><a class="btn pri" href="#/rtp">Training aus dem RTP erstellen</a></p><p><button class="btn" data-a="blankT">Leeres Training</button> <a class="btn" href="#/season">Saison planen</a></p></div>`);
+    <p><a class="btn pri" href="#/new">Erstes Training erstellen</a></p><p class="small muted">Du wählst, ob du mit dem RTP, der Saisonplanung oder einem leeren Training startest.</p></div>`);
 }
 
 // ---------- Ansicht: Editor ----------
@@ -202,7 +215,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`) + rtpSummary(t, 'edit') + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Team<input data-b="t:team" list="teams" value="${esc(t.team)}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -249,7 +262,7 @@ function goalieHtml(g, full) {
 }
 function viewRead(t) {
   let m = 0;
-  return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`) + `
+  return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`, esc(t.title || 'Ohne Titel')) + `
   <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
     ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
@@ -299,8 +312,7 @@ function libList() {
 function viewLib() {
   const f = S.lib, pt = S.pick && getT(S.pick);
   const sps = [...new Set(lib().filter(e => (!f.stage || e.stages.has(f.stage)) && (!f.kind || e.kind === f.kind)).flatMap(e => [...e.sps]))].sort((a, b) => a.localeCompare(b, 'de'));
-  return head('Bibliothek', pt ? `/t/${pt.id}` : null, `<a class="btn" href="#/lib/new">+ Eigene</a>`) + `
-  ${pt ? `<div class="card pickbar">Übung wählen für <b>${esc(pt.title)}</b></div>` : ''}
+  return head(pt ? 'Übung hinzufügen' : 'Bibliothek', pt ? `/t/${pt.id}` : null, pt ? '' : `<a class="btn" href="#/lib/new">+ Eigene</a>`, pt ? `zu: <b>${esc(pt.title)}</b>` : 'Übungen suchen und ansehen', ctxBar()) + `
   <input type="search" id="q" data-b="l:q" value="${esc(f.q)}" placeholder="Übung suchen …">
   <div class="chips">${KINDS.map(([k, l]) => `<button class="chip ${f.kind === k ? 'sel' : ''}" data-a="libKind" data-k="${k}">${l}</button>`).join('')}</div>
   <div class="grid2"><select data-b="l:stage" data-r="1">${stageOpts(f.stage, true)}</select><select data-b="l:sp" data-r="1">${opt('', 'Alle Schwerpunkte', f.sp)}${sps.map(s => opt(s, s, f.sp)).join('')}</select></div>
@@ -322,7 +334,7 @@ function viewLibItem(e) {
     <p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
     <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>
     ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
-  return head('Übung', '/lib') + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
+  return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : 'Bibliothek', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
     <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
     ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}</div>${body}
     <button class="btn pri block" data-a="addLib" data-k="${esc(e.key)}">${pt ? `Zu «${esc(pt.title)}» hinzufügen` : 'Zu einem Training hinzufügen'}</button>`;
@@ -331,7 +343,7 @@ function viewLibForm(id) {
   const c = id ? DB.custom.find(x => x.id === id) : null;
   S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
   const f = S.form;
-  return head(c ? 'Übung bearbeiten' : 'Eigene Übung', '/lib') + `<div class="card">
+  return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', 'Bibliothek · eigene Übungen', ctxBar()) + `<div class="card">
     <label>Name<input data-b="c:name" value="${esc(f.name)}"></label>
     <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
     <div class="chips">${R.stages.map(s => `<button class="chip ${f.stages.includes(s.id) ? 'sel' : ''}" data-a="cStage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
@@ -346,15 +358,16 @@ function viewLibForm(id) {
 // ---------- Ansicht: RTP ----------
 function viewRtp() {
   const st = stageById(DB.stage) || R.stages[0], gc = G.curriculum[st.id];
-  return head('Rahmentrainingsplan') + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
+  const gbox = `<div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul><p class="small muted">${esc(G.note)}</p></div>`;
+  return head('Rahmentrainingsplan', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Stufe und Block wählen' : 'Stufe wählen, dann Block ansehen', ctxBar('block')) + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
   <div class="card"><h2 class="nomargin">${esc(st.name)}${st.draft ? ' <span class="chip">Arbeitsstand</span>' : ''}</h2><p class="muted small">${esc(st.annahme)}</p>
     <details><summary>Hinweise zum RTP</summary><ul class="small">${R.hints.map(h => `<li>${esc(h)}</li>`).join('')}</ul>
       ${st.notes.map(n => `<b>${esc(n.title)}</b>${n.text.map(x => `<p class="small">${esc(x)}</p>`).join('')}`).join('')}
       <b>Termine &amp; Abkürzungen</b><ul class="small">${Object.entries(R.glossary).map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>
     <details><summary>Farbskala Erscheinungsformen</summary>${R.efs.teta.map(e => `<div class="small"><span class="dot" style="background:${efColor(e)}"></span>${esc(e)}</div>`).join('')}<p class="small muted">Athletik: ${R.efs.athletik.map(esc).join(' · ')}</p></details></div>
-  <div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul><p class="small muted">${esc(G.note)}</p></div>
+  ${S.flow ? '' : gbox}
   <h2>Trainingsblöcke</h2>${st.blocks.map(b => `<a class="card item" style="--c:${efColor(b.main.ef)}" href="#/rtp/${st.id}/${b.nr}"><div class="row"><b>Block ${b.nr} · ${esc(b.main.sp || b.main.ef)}</b><span class="muted small nowrap">${esc(b.monat || b.phase)}</span></div>
-    <div class="small muted">${esc(b.main.sp ? b.main.ef : b.main.ziel)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}${b.sec && b.sec.sp ? ` · Neben: ${esc(b.sec.sp)}` : ''}</div></a>`).join('')}`;
+    <div class="small muted">${esc(b.main.sp ? b.main.ef : b.main.ziel)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}${b.sec && b.sec.sp ? ` · Neben: ${esc(b.sec.sp)}` : ''}</div></a>`).join('')}${S.flow ? gbox : ''}`;
 }
 function viewBlock(st, b) {
   const part = (p, title) => p ? `<div class="card item" style="--c:${efColor(p.ef)}"><div class="small muted">${title} · ${esc(p.ef)}</div>${p.sp ? `<h2 class="nomargin">${esc(p.sp)}</h2>` : ''}
@@ -362,17 +375,18 @@ function viewBlock(st, b) {
     ${p.sp ? `<div class="gbox"><b>🧤 Goalie-Fokus</b><p>${esc(goalieFocus('gp', p.sp, p.ef, st.id))}</p></div>` : ''}
     ${p.gp && p.gp.length ? `<b>Good Practice</b><div class="chips">${p.gp.map(n => `<a class="chip" href="#/lib/x/${encodeURIComponent(norm(n))}">${esc(n)}</a>`).join('')}</div>` : ''}</div>` : '';
   const ev = [...b.events, ...b.weeks.flatMap(w => w.events.map(e => `W${w.w}: ${e}`))];
-  const weeks = st.slots ? b.weeks.map(w => `<h3>Woche ${w.w}${w.events.length ? ` <span class="muted small">· ${esc(w.events.join(', '))}</span>` : ''}</h3>${w.trainings.map((t, i) => `<div class="card"><div class="row"><b>Training ${i + 1}</b><button class="btn sm pri" data-a="fromRtp" data-s="${st.id}" data-b2="${b.nr}" data-w="${w.w}" data-i="${i}">Übernehmen</button></div>
+  const weeks = st.slots ? b.weeks.map(w => `<h3>Woche ${w.w}${w.events.length ? ` <span class="muted small">· ${esc(w.events.join(', '))}</span>` : ''}</h3>${w.trainings.map((t, i) => `<div class="card"><div class="row"><b>Training ${i + 1}</b><button class="btn sm pri" data-a="fromRtp" data-s="${st.id}" data-b2="${b.nr}" data-w="${w.w}" data-i="${i}">Training erstellen</button></div>
       ${st.slots.map(s => t[s.key] ? `<div class="slot"><span class="dot" style="background:${TYPES[slotType(s.label)][1]}"></span><span class="muted small">${esc(s.label)} (${esc(s.dur)})</span><br>${s.label === 'Athletik' ? esc(t[s.key]) : `<a href="#/lib/x/${encodeURIComponent(norm(t[s.key]))}">${esc(t[s.key])}</a>`}</div>` : '').join('')}</div>`).join('')}`).join('')
     : `<div class="card"><b>Training erstellen</b><p class="small muted">Für diese Stufe gibt der RTP Schwerpunkte und Athletik vor, aber keine einzelnen Trainings. Wähle die Trainingsnummer im Block – die App baut eine Vorlage mit passender Athletik-Einheit.</p>
       <div class="chips">${Array.from({ length: 12 }, (_, i) => `<button class="chip" data-a="fromRtp" data-s="${st.id}" data-b2="${b.nr}" data-w="0" data-i="${i}">${i + 1}</button>`).join('')}</div></div>`;
+  const trains = `<h2>Trainings</h2><button class="btn block" data-a="blockAll" data-s="${st.id}" data-b2="${b.nr}">Ganzen Block übernehmen (${st.slots ? b.weeks.reduce((a, w) => a + w.trainings.length, 0) : 12} Trainings)</button>${weeks}`;
   const ath = b.athletik ? `<h2>Athletik</h2><div class="card">${b.athletik.ziele.map(z => `<p class="small">${z.faktor ? `<b>${esc(z.faktor)}:</b> ` : '<b>Ziel:</b> '}${esc(z.text)}</p>`).join('')}</div>
     ${b.athletik.sessions.map(s => `<details class="card"><summary><b>${esc(s.faktor)}</b> <span class="muted small">Woche ${esc(s.woche)} · Training ${esc(s.training)}</span></summary>
       ${s.items.map(it => `<div class="slot"><b>${it.form ? `<a href="#/lib/x/${encodeURIComponent(norm(it.form))}">${esc(it.form)}</a>` : 'Übung'}</b><div class="small">${esc([it.whg, it.serien && it.serien + ' Serien', it.gewicht, it.rhythmus].filter(Boolean).join(' · '))}</div>${it.keypoints ? `<div class="small muted">${esc(it.keypoints)}</div>` : ''}</div>`).join('')}</details>`).join('')}` : '';
-  return head(`${st.id} · Block ${b.nr}`, '/rtp') + `<p class="muted small center">${esc(b.monat || b.phase)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}</p>
-    ${part(b.main, 'Hauptschwerpunkt')}${part(b.sec, 'Nebenschwerpunkt')}
+  return head(`${st.id} · Block ${b.nr}`, '/rtp', '', S.flow ? 'Neues Training · Training wählen' : 'Rahmentrainingsplan · Block', ctxBar('train')) + `<p class="muted small center">${esc(b.monat || b.phase)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}</p>
+    ${S.flow ? trains : ''}${part(b.main, 'Hauptschwerpunkt')}${part(b.sec, 'Nebenschwerpunkt')}
     ${ev.length || b.regel.length ? `<div class="card">${ev.length ? `<b>Termine / Events</b><div class="chips">${ev.map(e => chip(e)).join('')}</div>` : ''}${b.regel.length ? `<p class="small"><b>Regel-Fokus:</b> ${esc(b.regel.join(', '))}</p>` : ''}</div>` : ''}
-    <h2>Trainings</h2><button class="btn block" data-a="blockAll" data-s="${st.id}" data-b2="${b.nr}">Ganzen Block übernehmen (${st.slots ? b.weeks.reduce((a, w) => a + w.trainings.length, 0) : 12} Trainings)</button>${weeks}${ath}`;
+    ${S.flow ? '' : trains}${ath}`;
 }
 
 // ---------- Ansicht: Saison ----------
@@ -403,7 +417,7 @@ function seasonWeeks() {
 function viewSeason() {
   const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date()));
   const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!s.team || t.team === s.team)) (byDate[t.date] = byDate[t.date] || []).push(t); });
-  return head('Saisonplanung') + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
+  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : 'Wochenplan nach RTP', ctxBar()) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${s.days.map(d => WD[d]).join(', ')}</span></summary>
     <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Start (RTP-Woche 1)<input type="date" data-b="s:start" data-r="1" value="${esc(s.start)}"></label></div>
     <div class="grid2"><label>Team<input data-b="s:team" list="teams" value="${esc(s.team || '')}" placeholder="z.B. D2-Junioren"><datalist id="teams">${teamsOf().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label><label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label></div>
     <div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>
@@ -477,13 +491,21 @@ function doImport() {
 }
 
 // ---------- Router ----------
+const NEWV = () => head('Neues Training', '/', '', 'Wie möchtest du starten?') + `<div class="col">
+  <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
+  <button class="card choice" data-a="flow" data-k="season"><b>📅 Über die Saisonplanung</b><span class="small muted">Du siehst den Wochenplan und legst Trainings direkt auf einen Tag.</span></button>
+  <button class="card choice" data-a="flow" data-k="blank"><b>✏️ Leeres Training</b><span class="small muted">Ohne Vorlage: du fügst Blöcke selbst hinzu, auch aus der Bibliothek.</span></button></div>`;
 const NAV = [['/', 'Trainings', '📋'], ['/lib', 'Bibliothek', '📚'], ['/rtp', 'RTP', '🗺️'], ['/season', 'Saison', '📅'], ['/more', 'Mehr', '⋯']];
 function render() {
   const h = location.hash.slice(1) || '/';
   if (h.startsWith('i=')) { unpack(h.slice(2)).then(importData).catch(() => toast('Link konnte nicht gelesen werden')); history.replaceState(null, '', location.pathname + '#/'); return render(); }
   const p = h.split('/').filter(Boolean).map(decodeURIComponent);
   let html = '', tab = '/' + (p[0] || ''), run = false;
+  if (S.flow && !(S.flow.k === 'rtp' && ['rtp', 'new'].includes(p[0])) && !(S.flow.k === 'season' && ['season', 'new'].includes(p[0]))) S.flow = null;
+  if (S.pick && p[0] !== 'lib') S.pick = null;
+  if (S.done && S.done.h !== '/' + p.map(encodeURIComponent).join('/')) S.done = null;
   if (!p.length) html = viewHome();
+  else if (p[0] === 'new') { html = NEWV(); tab = '/'; }
   else if (p[0] === 't') {
     const t = getT(p[1]); tab = '/';
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
@@ -501,7 +523,7 @@ function render() {
   if (!run && S.run) { S.run = null; wakeLock(false); }
   document.body.classList.toggle('running', run);
   $('#app').innerHTML = html;
-  $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}"><span>${i}</span>${l}</a>`).join('');
+  $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
   if (render.last !== h.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
   render.last = h.split('/').slice(0, 3).join('/');
   if (p[0] === 'season' && !render.seasonScrolled) { const el = $('.week.now'); if (el) { el.scrollIntoView({ block: 'center' }); render.seasonScrolled = true; } }
@@ -512,8 +534,11 @@ addEventListener('hashchange', render);
 const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
 const A = {
   close: closeModal,
-  newT() { modal(`<h2>Neues Training</h2><div class="col"><a class="btn pri" href="#/rtp" data-a="close">Aus dem RTP übernehmen</a><a class="btn" href="#/season" data-a="close">Über die Saisonplanung</a><button class="btn" data-a="blankT">Leeres Training</button></div>`); },
-  blankT() { closeModal(); const t = newTraining({}); go(`/t/${t.id}`); },
+  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k }; go(k === 'rtp' ? '/rtp' : '/season'); },
+  flowCancel() { S.flow = null; go('/'); },
+  pickCancel() { const id = S.pick; S.pick = null; go(id && getT(id) ? `/t/${id}` : '/'); },
+  doneX() { S.done = null; render(); },
+  blankT() { const t = newTraining({}); done('Leeres Training angelegt – gib ihm einen Titel und füge Blöcke hinzu.', `/t/${t.id}`); },
   tog(el) { const id = el.dataset.id; S.open.has(id) ? S.open.delete(id) : S.open.add(id); render(); },
   togAll() { const t = curT(), all = t.items.every(i => S.open.has(i.id)); t.items.forEach(i => all ? S.open.delete(i.id) : S.open.add(i.id)); render(); },
   mv(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= t.items.length) return; [t.items[i], t.items[j]] = [t.items[j], t.items[i]]; touch(t); render(); },
@@ -541,7 +566,7 @@ const A = {
   blockAll(el) {
     const st = stageById(el.dataset.s), b = st.blocks.find(x => x.nr === +el.dataset.b2); let n = 0;
     if (st.slots) b.weeks.forEach(w => w.trainings.forEach((_, i) => { trainingFromRtp(st.id, b.nr, w.w, i); n++; })); else for (let i = 0; i < 12; i++, n++) trainingFromRtp(st.id, b.nr, 0, i);
-    toast(`${n} Trainings erstellt`); go('/');
+    S.flow = null; done(`${n} Trainings erstellt (${st.id} · Block ${b.nr}) – hier in der Liste.`, '/');
   },
   sBlock(el) {
     const s = seasonCfg(), have = new Set(DB.trainings.filter(t => !s.team || t.team === s.team).map(t => t.date)); let n = 0;
@@ -563,7 +588,7 @@ const A = {
   libMore() { S.lib.limit += 100; $('#liblist').innerHTML = libList(); },
   utp(el) { navigator.clipboard && navigator.clipboard.writeText(el.dataset.n).then(() => toast('Name kopiert'), () => { }); open('https://utp.swissunihockey.ch', '_blank', 'noopener'); },
   addLib(el) {
-    const e = libGet(el.dataset.k), add = t => { const it = itemFromLib(e, t); t.items.push(it); touch(t); toast('Hinzugefügt'); closeModal(); S.pick = null; go(`/t/${t.id}`); };
+    const e = libGet(el.dataset.k), add = t => { const it = itemFromLib(e, t); t.items.push(it); S.open.add(it.id); touch(t); closeModal(); S.pick = null; done(`«${it.name}» zum Training hinzugefügt (ganz unten, aufgeklappt).`, `/t/${t.id}`); setTimeout(() => { const c = document.querySelector(`[data-id="${it.id}"]`); c && c.scrollIntoView({ block: 'center' }); }, 50); };
     if (el.dataset.t) return add(el.dataset.t === 'new' ? newTraining({}) : getT(el.dataset.t));
     if (S.pick && getT(S.pick)) return add(getT(S.pick));
     const ts = [...DB.trainings].sort((a, b) => b.updated - a.updated).slice(0, 8);
@@ -573,8 +598,8 @@ const A = {
   saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) Object.assign(DB.custom.find(x => x.id === f.id), f); else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
-  fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); toast('Training erstellt'); go(`/t/${t.id}`); },
-  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); go(`/t/${t.id}`); },
+  fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
+  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
   sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
   runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); render(); },
