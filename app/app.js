@@ -236,10 +236,15 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
   items.push({ ...mkItem('spiel', 'Spielform', b.sec ? 20 : 35), desc: 'Bonuspunkte/Feedback in Bezug auf den Hauptschwerpunkt.', g: gDef('spiel') });
   return newTraining({ ...base, items, title: `${st.id} · Block ${b.nr} (${b.monat || b.phase}) · Training ${n}` });
 }
+// Eigene Übungen: der Übungstext gehört zur Übung. Im Training steht eine Kopie (damit geteilte Trainings ihn auch ohne die Übung zeigen);
+// wird der Text geändert – im Training oder in der Bibliothek –, bekommen ihn alle Trainings mit dieser Übung, auch vergangene.
+const customTxt = e => ({ desc: [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'), coach: [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n') });
+const customOf = it => { const id = it.lib && String(it.lib).startsWith('c:') ? String(it.lib).slice(2) : ''; return (id && DB.custom.find(x => x.id === id)) || (!it.lib && it.name && DB.custom.find(x => x.name && norm(x.name) === norm(it.name))) || null; };
+function syncCustom(c) { const x = customTxt(c); let k = 0; for (const t of DB.trainings) for (const it of t.items) if (customOf(it) === c) { it.desc = x.desc; it.coach = x.coach; k++; } LIB = null; save(); return k; }
 function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
   const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
-  if (e.src === 'custom') { it.desc = [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'); it.coach = [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n'); }
+  if (e.src === 'custom') Object.assign(it, customTxt(e));
   else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
   else if (e.src === 'rtp') { it.desc = nt.desc || ''; it.coach = nt.coach || ''; }
   it.g = e.kind === 'goalie' ? { mode: 'own', name: e.src === 'goalie' ? e.name : '', text: e.src === 'custom' ? e.desc || '' : '' }
@@ -310,7 +315,7 @@ function goalieSummary(g) {
 function itemCard(t, it, i) {
   const ty = TYPES[it.type] || TYPES.sonst, open = S.open.has(it.id), g = it.g || (it.g = { mode: 'team', name: '', text: '' });
   const gopts = lib().filter(e => e.kind === 'goalie');
-  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null, u = itemUtp(it, t), ux = u && itemEx(it, t);
+  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null, u = itemUtp(it, t), ux = u && itemEx(it, t), cx = customOf(it);
   return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}">
     <div class="row"><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
       <input class="name" data-b="i:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">
@@ -318,9 +323,9 @@ function itemCard(t, it, i) {
     ${open ? `<div class="body">
       ${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
-      <label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>
+      ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen am Text gelten für diese Übung in allen Trainings, auch in vergangenen.</div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>`}
       <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it, t))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
-      <label>${ux ? 'Eigene Keypoints / Coachingfragen' : 'Keypoints / Coachingfragen'}<textarea data-b="i:${it.id}:coach" rows="2" placeholder="${ux ? 'Optional: zusätzlich zu den Keypoints oben' : ''}">${esc(it.coach)}</textarea></label>
+      ${cx ? '' : `<label>${ux ? 'Eigene Keypoints / Coachingfragen' : 'Keypoints / Coachingfragen'}<textarea data-b="i:${it.id}:coach" rows="2" placeholder="${ux ? 'Optional: zusätzlich zu den Keypoints oben' : ''}">${esc(it.coach)}</textarea></label>`}
       <div class="gbox"><b>🧤 Goalie</b>
         <label>Rolle in diesem Block<select data-b="g:${it.id}:mode" data-r="1">${opt('team', 'Mit dem Team (im Tor / macht mit)', g.mode)}${opt('own', 'Eigene Goalie-Übung (parallel)', g.mode)}${opt('none', 'Nicht im Einsatz / Pause', g.mode)}</select></label>
         ${g.mode === 'own' ? `<label>Goalie-Übung<select data-b="g:${it.id}:name" data-r="1">${opt('', '– frei beschreiben –', g.name)}${gopts.map(e => opt(e.name, e.name + (e.stages.has(t.stage) ? '' : ' (andere Stufe)'), g.name)).join('')}</select></label>
@@ -944,7 +949,7 @@ const A = {
     modal(`<h2>Zu welchem Training?</h2><div class="col">${ts.map(t => `<button class="btn" data-a="addLib" data-k="${esc(e.key)}" data-t="${t.id}">${esc(t.title)}${t.date ? ' · ' + fmtDate(t.date) : ''}</button>`).join('')}<button class="btn pri" data-a="addLib" data-k="${esc(e.key)}" data-t="new">+ Neues Training</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   },
   cStage(el) { const f = S.form, k = el.dataset.k; f.stages = f.stages.includes(k) ? f.stages.filter(x => x !== k) : [...f.stages, k]; el.classList.toggle('sel'); },
-  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) Object.assign(DB.custom.find(x => x.id === f.id), f); else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
+  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) { const c = DB.custom.find(x => x.id === f.id); Object.assign(c, f); syncCustom(c); } else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
   fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
@@ -983,6 +988,7 @@ function onInput(ev) {
   }
   else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
+  else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { c[b] = v; syncCustom(c); } }
   else if (k === 'f') { S.seed[a] = v; return; }
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
   else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
