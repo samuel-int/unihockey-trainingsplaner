@@ -16,8 +16,9 @@ liegen lokal im Browser des jeweiligen Geräts.
 
 Die App liegt auf GitHub Pages: **https://samuel-int.github.io/unihockey-trainingsplaner/**
 
-Jeder Push auf den Branch `main` stellt den Ordner `app/` automatisch neu online
-(`.github/workflows/pages.yml`). Die Excel- und PDF-Quelldateien bleiben lokal (`.gitignore`).
+Online gestellt wird mit `sh tools/publish.sh`: Das Skript lädt den Quellcode auf den Branch `main`
+und den Inhalt von `app/` auf den Branch `gh-pages`, den GitHub Pages ausliefert.
+Die Excel- und PDF-Quelldateien bleiben lokal (`.gitignore`).
 
 Für Änderungen an der App gibt es den Claude-Code-Agenten `trainingsplaner-wartung`
 (`.claude/agents/trainingsplaner-wartung.md`).

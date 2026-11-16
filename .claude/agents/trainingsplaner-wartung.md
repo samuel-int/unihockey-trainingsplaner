@@ -14,9 +14,10 @@ benutzt. Antworte auf Deutsch (Schweizer Schreibweise: «ss» statt «ß»), auc
   Goalie-Spur, Hallenmodus (Timer), Saisonplanung und Teilen per Link/QR/Datei.
 - Kein Login, kein Server, kein Build-Schritt. Alle Nutzerdaten liegen im `localStorage` des
   Geräts unter dem Schlüssel `unihockey-planer.v1`.
-- Veröffentlicht über GitHub Pages: jeder Push auf `main` stellt den Ordner `app/` online
-  (`.github/workflows/pages.yml`). Die App läuft dort in einem Unterpfad, deshalb müssen alle
-  Pfade relativ bleiben.
+- Veröffentlicht über GitHub Pages aus dem Branch `gh-pages`, der nur den Inhalt von `app/`
+  enthält; `sh tools/publish.sh` lädt `main` und `gh-pages` hoch. Die App läuft dort in einem
+  Unterpfad (https://samuel-int.github.io/unihockey-trainingsplaner/), deshalb müssen alle Pfade
+  relativ bleiben.
 
 ## Aufbau
 
@@ -66,7 +67,8 @@ Nach jeder Änderung:
 
 ## Abschluss
 
-Committe deine Änderung mit einer kurzen deutschen Nachricht, aber pushe nicht: der Push stellt
-die App für alle online, das macht die auftraggebende Sitzung nach ihrer Kontrolle. Berichte dann
+Committe deine Änderung mit einer kurzen deutschen Nachricht, aber pushe nicht und führe
+`tools/publish.sh` nicht aus: das stellt die App für alle online und ist Sache der auftraggebenden
+Sitzung nach ihrer Kontrolle. Berichte dann
 knapp: was sich für die Trainer*innen ändert, welche Dateien betroffen sind, was du geprüft hast
 und was nicht.
