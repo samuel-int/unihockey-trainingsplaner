@@ -864,7 +864,7 @@ function awSection(tm) {
 const JS_AWK = 'PERSONENNUMMER;FUNKTION;DATUM;AKTIVITAETSTYP;ZEIT;DAUER;ORT', JS_ACT = 'AKTIVITAETSTYP;DATUM;ZEIT;DAUER;ORT;FOKUS';
 const JS_DUR = { Training: [60, 75, 90, 120, 150, 180, 210, 240, 270, 300], Trainingstag: [240, 300] };
 const csvCell = v => { v = String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); return /[;"]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-const jsMin = t => total(t) || +t.min || 0;   // Dauer wie im Kopf des Trainings (Summe der Blöcke), sonst die geplante Dauer
+const jsMin = t => +t.min || total(t) || 0;   // J+S: geplante Trainingsdauer (Feld «Dauer», Hallenzeit), sonst Summe der Blöcke
 function jsExport(tm, kind) {
   const r = awRange(tm), ts = awTrainings(tm, r), pl = playersOf(tm), awk = kind === 'awk', rows = [], issues = [], noNr = new Set(), used = new Set(); let wk = false;
   ts.forEach(t => {
@@ -985,6 +985,8 @@ function doImport() {
     if (Array.isArray(m.players)) mergePlayers(tm, m.players);
     if (isTeam && !shared) shared = tm;
   });
+  if (d.s) for (const [id, cfg] of Object.entries(d.s)) if (teamById(id) && !DB.seasons[id] && cfg) DB.seasons[id] = JSON.parse(JSON.stringify(cfg));   // Datensicherung: Saison pro Mannschaft
+  if (d.season && !DB.season.set) DB.season = JSON.parse(JSON.stringify(d.season));
   for (const t of d.t) {
     if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta);
     const i = DB.trainings.findIndex(x => x.id === t.id);
@@ -1169,7 +1171,7 @@ const A = {
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
   shFile() { download(S.share.file, S.share.data); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
-  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams }); },
+  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams, s: DB.seasons, season: DB.season }); },
   impFile() { $('#file').click(); },
   impOk: doImport,
   install() { installEvt && installEvt.prompt(); installEvt = null; },
