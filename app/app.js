@@ -637,24 +637,34 @@ function planInfo(P) {   // wo der Saisonplan den Block vorsieht
   const ws = rows.map(r => r.w && r.w.w).filter(Boolean);
   return { rows, first: days[0].date, label: ws.length ? `Woche ${Math.min(...ws)}–${Math.max(...ws)}` : b.monat || b.phase || '' };
 }
+// Vergleich Trainings pro Woche: RTP (nur Stufen mit Mikroplanung) gegenüber den Einheiten der Mannschaft bzw. den gewählten Tagen
+function planShort(P, st, b, tm) {
+  if (!st.slots || !b) return null;
+  const rtp = Math.max(0, ...b.weeks.map(w => w.trainings.length));
+  const have = tm ? teamSessions(tm, true).length : (P.mode === 'own' ? (P.days || []).length : seasonCfgFor(null).days.length);
+  return have && have < rtp ? { rtp, have, weeks: b.weeks.length } : null;
+}
+const spanWeeks = (a, z) => Math.round((monday(pd(z)) - monday(pd(a))) / 6048e5) + 1;
 function planCompute(P) {
   const tm = teamById(P.team), st = stageById(P.stage), b = st && st.blocks.find(x => x.nr === +P.block), c = { tm, st, b, items: [], skipped: [], hol: 0, total: 0, noSess: false };
   if (!b) return c;
   const cfg = seasonCfgFor(tm), ts = DB.trainings.filter(t => t.date && (!tm || (teamOf(t) || {}).id === tm.id)), day = date => ts.filter(t => t.date === date);
   const list = st.slots ? b.weeks.flatMap(w => w.trainings.map((_, i) => ({ w, idx: i }))) : Array.from({ length: 12 }, (_, i) => ({ w: null, idx: i }));
   c.total = list.length;
+  let start = P.start;
   if (P.mode === 'season') {
     const info = planInfo(P); if (!info) return c;
+    if (P.fill) start = info.first; else {
     info.rows.forEach(r => [...new Set(r.days.map(d => d.date))].forEach(date => {
       const ds = r.days.filter(d => d.date === date), m = matchDay(day(date), ds.map(d => d.sess));
       ds.forEach((d, i) => m.hit[i] ? c.skipped.push({ date, sess: d.sess }) : c.items.push({ date, sess: d.sess, w: r.w, idx: d.idx }));
     }));
-    return c;
+    return c; }
   }
-  if (!P.start) return c;
+  if (!start) return c;
   const sess = tm ? teamSessions(tm, true) : (P.days || []).map(wd => ({ id: 'd' + wd, wd, time: P.time || '', min: 0, ort: '' }));
   if (!sess.length) { c.noSess = true; return c; }
-  const hol = new Set(cfg.hol || []), seen = new Set(); let d = pd(P.start), q = 0;
+  const hol = new Set(cfg.hol || []), seen = new Set(); let d = pd(start), q = 0;
   for (let n = 0; n < 800 && q < list.length; n++, d = addDays(d, 1)) {
     const mk = iso(monday(d)); if (hol.has(mk)) { seen.add(mk); continue; }
     const ds = sess.filter(x => x.wd === d.getDay()).sort((a, b2) => a.time.localeCompare(b2.time)); if (!ds.length) continue;
@@ -676,14 +686,23 @@ function viewPlan() {
   if (P.mode === 'own' && !P.start) P.start = iso(new Date());
   const c = P.block ? planCompute(P) : null, n = !P.block ? 1 : (P.mode === 'own' && !P.start ? 2 : 3);
   const first = c && c.items[0], last = c && c.items[c.items.length - 1], who = tm ? tm.name : 'ohne Mannschaft';
+  const sh = c && c.b ? planShort(P, st, c.b, tm) : null, perW = x => x === 1 ? 'einmal' : x === 2 ? 'zweimal' : x + '-mal';
+  const shortBox = sh && P.mode === 'season' ? `<div class="gbox"><b>${esc(tm ? tm.name + ' trainiert' : 'Du trainierst')} ${perW(sh.have)} pro Woche, der RTP sieht ${sh.rtp} Trainings vor.</b>
+      <p class="small">Wie willst du den Block planen?</p>
+      <button class="card choice ${P.fill ? '' : 'sel'}" data-a="planFill" data-k="0"><b>Im Saisonrhythmus bleiben</b><span class="small muted">Der Block bleibt in seinen ${sh.weeks} Wochen. Pro Woche ${sh.have === 1 ? 'kommt nur das erste RTP-Training dran, das zweite fällt' : 'kommen nur die ersten ' + sh.have + ' RTP-Trainings dran, die übrigen fallen'} weg.</span></button>
+      <button class="card choice ${P.fill ? 'sel' : ''}" data-a="planFill" data-k="1"><b>Alle Trainings, Block wird länger</b><span class="small muted">Alle Trainings des Blocks der Reihe nach ab dem Saisonplan-Start. Der Block dauert etwa ${Math.ceil(sh.weeks * sh.rtp / sh.have)} statt ${sh.weeks} Wochen, die folgenden Blöcke rücken nach hinten.</span></button></div>` : '';
+  const shortNote = sh && c.items.length ? (P.mode === 'season' && !P.fill
+      ? `<p class="small warn">${c.total - c.items.length} RTP-Training${c.total - c.items.length === 1 ? '' : 's'} dieses Blocks ${c.total - c.items.length === 1 ? 'fällt' : 'fallen'} weg, weil pro Woche nur ${sh.have} Einheit${sh.have > 1 ? 'en' : ''} zur Verfügung ${sh.have > 1 ? 'stehen' : 'steht'}.</p>`
+      : `<p class="small muted">Der Block dauert ${spanWeeks(first.date, last.date)} statt ${sh.weeks} Wochen, weil pro Woche nur ${sh.have} von ${sh.rtp} RTP-Trainings Platz ${sh.have === 1 ? 'hat' : 'haben'}.</p>`) : '';
   const sessTxt = tm ? teamSessions(tm, true).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit' : '';
   const startCards = P.block ? `<div class="card"><h3 class="nomargin">2 · Start</h3>
     <button class="card choice ${P.mode === 'season' ? 'sel' : ''}" data-a="planMode" data-k="season" ${info ? '' : 'disabled'}><b>Nach Saisonplan</b><span class="small muted">${info ? esc(info.label) + ', ab ' + fmtDate(info.first) : 'Dieser Block liegt nicht im Saisonplan' + (tm ? ' von ' + esc(tm.name) : '') + ' (Saison-Start ' + fmtDate(seasonCfgFor(tm).start) + ').'}</span></button>
+    ${shortBox}
     <button class="card choice ${P.mode === 'own' ? 'sel' : ''}" data-a="planMode" data-k="own"><b>Eigener Starttermin</b><span class="small muted">Die Trainings kommen der Reihe nach auf die Trainingszeiten, ab dem gewählten Tag.</span></button>
     ${P.mode === 'own' ? `<label>Starttermin<input type="date" data-b="p:start" data-r="1" value="${esc(P.start)}"></label>
       ${tm ? `<div class="small muted" style="margin-top:10px">Trainingszeiten von ${esc(tm.name)}</div><p class="small nomargin">${sessTxt}</p><p class="small"><a href="#/team/${tm.id}/edit">Trainingszeiten bearbeiten</a></p>`
         : `<div class="small muted" style="margin-top:10px">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${P.days.includes(d) ? 'sel' : ''}" data-a="planDay" data-k="${d}">${WD[d]}</button>`).join('')}</div><label>Startzeit<input type="time" data-b="p:time" value="${esc(P.time || '')}"></label>`}` : tm ? '' : `<p class="small muted nomargin">Ohne Mannschaft gelten die Trainingstage der allgemeinen Saison-Konfiguration (${gen.days.map(d => WD[d]).join(', ')}).</p>`}</div>` : '';
-  const prev = c ? `<div class="card item" style="--c:${efColor(c.b.main.ef)}"><h3 class="nomargin">3 · Vorschau</h3>${c.noSess ? '<p class="warn">Keine Trainingszeit vorhanden – lege Trainingstage fest.</p>' : c.items.length ? `<p class="nomargin"><b>${c.items.length} Training${c.items.length > 1 ? 's' : ''}</b> · ${st.id} · Block ${c.b.nr} (${esc(c.b.main.sp || c.b.main.ef)}) · ${esc(who)}</p><p class="nomargin">${fmtDate(first.date)} bis ${fmtDate(last.date)}</p>${c.items.length < c.total ? `<p class="small muted nomargin">Der Block hat ${c.total} Trainings; ${c.total - c.items.length} davon fallen nicht in den Saisonplan oder auf schon belegte Tage.</p>` : ''}` : '<p class="muted">Keine Trainings zu planen (Datum prüfen).</p>'}
+  const prev = c ? `<div class="card item" style="--c:${efColor(c.b.main.ef)}"><h3 class="nomargin">3 · Vorschau</h3>${c.noSess ? '<p class="warn">Keine Trainingszeit vorhanden – lege Trainingstage fest.</p>' : c.items.length ? `<p class="nomargin"><b>${c.items.length} Training${c.items.length > 1 ? 's' : ''}</b> · ${st.id} · Block ${c.b.nr} (${esc(c.b.main.sp || c.b.main.ef)}) · ${esc(who)}</p><p class="nomargin">${fmtDate(first.date)} bis ${fmtDate(last.date)}</p>${shortNote || (c.items.length < c.total ? `<p class="small muted nomargin">Der Block hat ${c.total} Trainings; ${c.total - c.items.length} davon fallen nicht in den Saisonplan oder auf schon belegte Tage.</p>` : '')}` : '<p class="muted">Keine Trainings zu planen (Datum prüfen).</p>'}
     ${c.skipped.length ? `<p class="small warn">${c.skipped.length} Tag${c.skipped.length > 1 ? 'e sind' : ' ist'} schon mit einem Training belegt und ${c.skipped.length > 1 ? 'werden' : 'wird'} nicht doppelt belegt: ${c.skipped.slice(0, 6).map(x => dm(pd(x.date)) + (x.sess.time ? ' ' + x.sess.time : '')).join(', ')}${c.skipped.length > 6 ? ' …' : ''}${P.mode === 'own' ? ' (der Block rückt auf den nächsten freien Termin).' : '.'}</p>` : ''}
     ${c.hol ? `<p class="small muted">${c.hol} Ferienwoche${c.hol > 1 ? 'n' : ''} der Saison-Konfiguration ${c.hol > 1 ? 'werden' : 'wird'} übersprungen.</p>` : ''}
     ${c.items.length ? `<details><summary class="small">Alle Termine</summary>${c.items.map(x => `<div class="small">${fmtDate(x.date)}${x.sess.time ? ' · ' + x.sess.time : ''} · ${x.w ? 'Woche ' + x.w.w + ' · ' : ''}Training ${x.idx + 1}</div>`).join('')}</details><button class="btn pri block" data-a="planGo">${c.items.length} Training${c.items.length > 1 ? 's' : ''} anlegen</button>` : ''}</div>` : '';
@@ -930,6 +949,7 @@ const A = {
   sBlock(el) { openPlan({ team: S.sTeam, stage: seasonCfg().stage, block: el.dataset.k, mode: 'season' }); },
   planOpen(el) { const d = el.dataset; let team = d.team || ''; if (!team && d.auto) { const l = DB.teams.filter(x => x.stage === d.s); if (l.length === 1) team = l[0].id; } openPlan({ team, stage: d.s || (teamById(team) || {}).stage || '', block: d.b2, mode: d.mode || (d.b2 ? 'season' : 'own') }); },
   planMode(el) { const P = S.plan; P.mode = el.dataset.k; if (P.mode === 'own' && !P.start) P.start = iso(new Date()); render(); },
+  planFill(el) { S.plan.fill = el.dataset.k === '1'; render(); },
   planDay(el) { const P = S.plan, k = +el.dataset.k; P.days = P.days.includes(k) ? P.days.filter(x => x !== k) : [...P.days, k]; render(); },
   planCancel() { const b = S.plan ? S.plan.back : '/'; S.plan = null; go(b); },
   planGo() {
