@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Browser-Schutz: nur eigene Skripte, Netzverbindungen nur zum eigenen Ursprung und zum Supabase-Projekt (localhost:5180 = Test-Server tools/sync-mock.js). Bei neuem Supabase-Projekt die Adresse hier anpassen. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://pkalqhbueopztvznxukj.supabase.co http://localhost:5180 http://127.0.0.1:5180; worker-src 'self'; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Unihockey Trainingsplaner</title>
 <meta name="description" content="Trainings nach den Rahmentrainingsplänen planen – mit Goalie-Spur, Hallenmodus und Saisonplanung. Ohne Login, offline nutzbar.">
 <meta name="theme-color" content="#0a5fb4">
