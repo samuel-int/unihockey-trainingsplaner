@@ -146,3 +146,23 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .warnbox { border-left: 4px solid var(--danger); background: var(--bg); padding: 10px 12px; border-radius: 10px; margin: 10px 0; font-size: .92rem; }
 .spcard { border-left: 5px solid var(--pri); } .spcard .row { margin: 6px 0; } .spcard .btn { flex: none; }
 .rotop { border-left: 5px solid var(--danger); font-weight: 600; }
+
+/* Training abschliessen: Anwesenheit, Reflexion */
+.pk { min-height: 44px; padding: 6px 4px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; font-size: 1rem; cursor: pointer; flex: 1; min-width: 0; }
+.pk.sel { background: var(--pri); border-color: var(--pri); color: var(--pri-t); font-weight: 700; } .pk:disabled { opacity: .5; }
+.pk.mid:not(.sel) { border-style: dashed; }
+.pick3 { display: flex; gap: 6px; margin: 8px 0 2px; } .pick3 .pk { min-height: 46px; }
+.scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; } .scale-l { display: flex; justify-content: space-between; gap: 6px; margin: 3px 2px 0; } .scale-l span { flex: 1; text-align: center; } .scale-l span:first-child { text-align: left; } .scale-l span:last-child { text-align: right; }
+.rfs { margin-top: 14px; } .rfz { margin: 6px 0 2px; }
+.rfx { border-top: 1px solid var(--line); padding: 8px 0 4px; } .rfx:first-of-type { border-top: 0; } .rfx .row { align-items: center; }
+.rfx .nm, .rfp .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; } .rfx .pick3 { width: 156px; flex: none; margin: 0; } .rfp .pick3 { width: 206px; flex: none; margin: 0; }
+.rfwhy[hidden] { display: none; } .rfx .rfwhy { margin: 4px 0 6px; }
+.rfp { border-top: 1px solid var(--line); padding: 6px 0; } .rfp .pk { font-size: .86rem; }
+.rfbar { position: sticky; bottom: calc(var(--nav) + 8px + env(safe-area-inset-bottom)); z-index: 4; display: flex; align-items: center; gap: 10px; margin: 14px 0 0; padding: 10px 12px; border-radius: 14px; background: var(--card); box-shadow: 0 2px 10px rgba(0, 0, 0, .18); }
+.rfprog { flex: 1; min-width: 0; font-size: .86rem; line-height: 1.3; } .rfprog b { display: block; } .rfbarw { display: block; height: 5px; border-radius: 3px; background: var(--line); margin-top: 4px; overflow: hidden; } .rfbarw i { display: block; height: 100%; background: var(--pri); }
+.rfbar .btn { flex: none; }
+.rfprev { border-left: 5px solid var(--gfg); } .rfcard { border-left: 5px solid var(--pri); } .rfcard p { margin: 4px 0; }
+.rftag { display: inline-block; margin-top: 6px; padding: 4px 10px; min-height: 30px; border-radius: 15px; border: 1px dashed var(--muted); color: var(--muted); font-size: .8rem; cursor: pointer; } .rftag.ok { border-style: solid; border-color: #2e9e6b; color: #2e9e6b; }
+.rfhint { margin: 6px 0 0; color: var(--gfg); } .rbrow { display: block; padding: 8px 0; border-top: 1px solid var(--line); color: var(--text); }
+@media print { .noprint, .rfbar, .rftag { display: none !important; } }
+.runnav .runend { flex: 1.7; }
