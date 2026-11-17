@@ -431,7 +431,7 @@ function trailOf() {
   }
   if (p[0] === 't') {
     const t = getT(p[1]); if (!t) return [TR, ['Nicht gefunden']];
-    const x = { run: 'Hallenmodus', view: 'Übersicht', att: 'Anwesenheit' }[p[2]];
+    const x = { run: 'Hallenmodus', view: 'Übersicht', att: 'Anwesenheit', end: 'Abschluss' }[p[2]];
     return x ? [...tPath(t), [x]] : tPath(t);
   }
   if (p[0] === 'lib') {
@@ -459,6 +459,7 @@ const head = (title, back, right = '', sub = '', bar = '') => `<header class="to
 function ctxBar(step) {
   const f = S.flow, pt = S.pick && getT(S.pick);
   if (step === 'plan') return `<div class="ctx"><span class="grow"><b>Ganzen Block planen</b><br>Schritt ${arguments[1]} von 3: ${['Mannschaft und Block wählen', 'Starttermin wählen', 'Vorschau prüfen und anlegen'][arguments[1] - 1]}</span><button class="btn sm" data-a="planCancel">Abbrechen</button><div class="steps">${[1, 2, 3].map(i => `<i class="${i <= arguments[1] ? 'on' : ''}"></i>`).join('')}</div></div>`;
+  if (step === 'end') return `<div class="ctx"><span class="grow"><b>Training abschliessen</b><br>Schritt ${arguments[1]} von 2: ${['Anwesenheit', 'Reflexion'][arguments[1] - 1]}</span><button class="btn sm" data-a="endLater">Später</button><div class="steps">${[1, 2].map(i => `<i class="${i <= arguments[1] ? 'on' : ''}"></i>`).join('')}</div></div>`;
   if (pt) return `<div class="ctx"><span class="grow">Übung wählen für <b>${esc(pt.title)}</b></span><button class="btn sm" data-a="pickCancel">Abbrechen</button></div>`;
   if (!f) return '';
   const rtp = f.k === 'rtp', n = step === 'train' ? 2 : 1;
@@ -474,7 +475,7 @@ function viewHome() {
   const ts = DB.trainings.filter(t => !f || (teamOf(t) || {}).id === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
   S.visible = ts.map(t => t.id);
   const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div>
-    <div class="muted small">${metaLine(t, true)}</div>
+    <div class="muted small">${metaLine(t, true)}</div>${reflTag(t)}
     <div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div>`;
   const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#/t/${t.id}">${inner(t)}</a>`; };
   const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
@@ -503,6 +504,7 @@ function itemCard(t, it, i) {
       <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
     ${open ? `<div class="body">
       ${athHtml(it.ath)}${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
+      ${reflHint(reflKey(it))}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
       ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen am Text gelten für diese Übung in allen Trainings, auch in vergangenen.</div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : isSw(it) ? 14 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>${isSw(it) && SWD ? `<div class="row wrap"><button class="btn sm" data-a="swNew" data-id="${it.id}">Andere Auswahl</button><span class="small muted grow">Wählt die Übungen des Tages neu aus und ersetzt die Beschreibung.</span></div>` : ''}`}
       <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it, t))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
@@ -519,7 +521,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}` + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + reflPrevCard(t) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}${reflLink(t)}` + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -595,7 +597,7 @@ function viewRead(t) {
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
   ${rtpSummary(t)}${matCard(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
-    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${athHtml(it.ath)}${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
+    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${athHtml(it.ath)}${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}${reflCompact(t)}${reflLink(t)}`;
 }
 
 // ---------- Ansicht: Hallenmodus ----------
@@ -613,14 +615,14 @@ function viewRun(t) {
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
   return `<div class="run" style="--c:${ty[1]}">${crumbBar(true)}<div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
-    ${r.i === 0 && !r.started ? rtpSummary(t) + matCard(t) + attLink(t) : ''}
+    ${r.i === 0 && !r.started ? reflPrevCard(t) + rtpSummary(t) + matCard(t) + attLink(t) : ''}
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
     ${it.ath ? `<div class="card">${athHtml(it.ath)}</div>` : ''}${itemUtp(it, t) ? `<div class="card">${explain(itemUtp(it, t), itemEx(it, t), 'run:' + it.id)}</div>` : ''}${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
     ${goalieHtml(it.g, true)}
     ${nx ? `<p class="muted center small">Als Nächstes: <b>${esc(nx.name || (TYPES[nx.type] || TYPES.sonst)[0])}</b> (${esc(nx.min)}′)</p>` : '<p class="muted center small">Letzter Block</p>'}
-    <div class="row runnav"><button class="btn big" data-a="runGo" data-i="${r.i - 1}" ${r.i ? '' : 'disabled'}>‹ Zurück</button><button class="btn pri big" data-a="runGo" data-i="${r.i + 1}" ${nx ? '' : 'disabled'}>Weiter ›</button></div></div>`;
+    <div class="row runnav"><button class="btn big" data-a="runGo" data-i="${r.i - 1}" ${r.i ? '' : 'disabled'}>‹ Zurück</button>${nx ? `<button class="btn pri big" data-a="runGo" data-i="${r.i + 1}">Weiter ›</button>` : '<button class="btn pri big runend" data-a="runEnd">Training beenden ✓</button>'}</div></div>`;
 }
 setInterval(() => {
   const r = S.run; if (!r) return; const now = Date.now();
@@ -675,7 +677,7 @@ function viewLibItem(e) {
     ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
   return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : '', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
     <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
-    ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}</div>${body}
+    ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}${reflHint(e.key)}</div>${body}
     <button class="btn pri block" data-a="addLib" data-k="${esc(e.key)}">${pt ? `Zu «${esc(pt.title)}» hinzufügen` : 'Zu einem Training hinzufügen'}</button>`;
 }
 function viewLibForm(id) {
@@ -996,11 +998,11 @@ function viewTeams() {
 function viewTeam(id) {
   const tm = teamById(id); if (!tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
   const today = iso(new Date()), all = teamTrainings(tm).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '')), up = all.filter(t => !t.date || t.date >= today), past = all.filter(t => t.date && t.date < today).reverse();
-  const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
+  const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div>${reflTag(t)}<div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
-  ${spCard(tm)}${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
+  ${spCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
 function viewTeamForm(id) {
@@ -1027,13 +1029,15 @@ const attLink = t => {
   return `<a class="card attlink" href="#/t/${t.id}/att"><b>👥 Anwesenheit</b><span class="muted small">${tm ? (pl ? attCount(t, tm) + ' von ' + pl + ' anwesend' : 'Spielerliste anlegen') : 'Mannschaft nötig'}</span><span class="muted">›</span></a>`;
 };
 const attSum = (t, tm) => `${attCount(t, tm)} von ${playersOf(tm).length} anwesend`;
+const attBody = (t, tm, pl) => `
+  <div class="row sum"><b id="attn">${attSum(t, tm)}</b><button class="btn sm" data-a="attAll">Alle anwesend</button><button class="btn sm" data-a="attNone">Keine</button></div>
+  ${pl.map(p => `<button class="att ${attOf(t)[p.id] ? 'on' : ''}" data-a="attTog" data-id="${esc(p.id)}" aria-pressed="${attOf(t)[p.id] ? 'true' : 'false'}"><span class="box"></span><span class="grow"><b>${esc(pName(p))}</b>${p.rn || p.role === 'L' ? `<br><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>` : ''}</span></button>`).join('')}`;   // Zähler, «Alle anwesend» und Abhak-Liste (auch im Abschluss-Ablauf)
 function viewAtt(t) {
   const tm = teamOf(t), pl = playersOf(tm), hd = head('Anwesenheit', '/t/' + t.id, '', esc(t.title || 'Ohne Titel')) + `<div class="muted small">${metaLine(t, true)}</div>`;
   if (!tm) return hd + `<div class="card empty"><p>Dieses Training gehört zu keiner Mannschaft. Wähle im Training eine Mannschaft, dann kannst du ihre Spieler*innen abhaken.</p><p><a class="btn pri" href="#/t/${t.id}">Zum Training</a> <a class="btn" href="#/teams">Mannschaften</a></p></div>`;
   if (!pl.length) return hd + `<div class="card empty"><p>Für «${esc(tm.name)}» gibt es noch keine Spielerliste. Lege sie an, dann kannst du hier pro Training abhaken, wer da war.</p><p><button class="btn pri" data-a="toPlayers" data-k="${esc(tm.id)}">Zur Spielerliste</button></p></div>`;
   return hd + `<div class="card"><label>J+S-Aktivitätstyp<select data-b="t:jsType">${JS_TYPES.map(k => opt(k, k, jsTypeOf(t))).join('')}</select></label><p class="small muted nomargin">Wird beim Export für J+S verwendet. Bei «Wettkampf» und «Trainingstag» bleiben Startzeit und Ort in der Datei leer.</p></div>
-  <div class="row sum"><b id="attn">${attSum(t, tm)}</b><button class="btn sm" data-a="attAll">Alle anwesend</button><button class="btn sm" data-a="attNone">Keine</button></div>
-  ${pl.map(p => `<button class="att ${attOf(t)[p.id] ? 'on' : ''}" data-a="attTog" data-id="${esc(p.id)}" aria-pressed="${attOf(t)[p.id] ? 'true' : 'false'}"><span class="box"></span><span class="grow"><b>${esc(pName(p))}</b>${p.rn || p.role === 'L' ? `<br><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>` : ''}</span></button>`).join('')}
+  ${attBody(t, tm, pl)}
   <p class="small muted">Die Anwesenheit bleibt auf diesem Gerät und wird beim Teilen des Trainings nicht mitgegeben.</p>`;
 }
 
@@ -1128,12 +1132,132 @@ async function buildTeamShare() {
   const seq = buildTeamShare.n = (buildTeamShare.n || 0) + 1, url = appUrl() + '#i=' + await pack(data); if (seq !== buildTeamShare.n || !S.tsh) return;
   S.share = { url, t: { title: tm.name }, data, file: `mannschaft-${norm(tm.name).replace(/ /g, '-')}.json`, text: 'Unihockey-Trainingsplaner, Mannschaft: ' + tm.name };
   const up = all.filter(t => !t.date || t.date >= today).length;
-  modal(`<h2>«${esc(tm.name)}» teilen</h2><p class="small">Du gibst eine Kopie weiter: Mannschaft (Name, Stufe, Farbe, Trainingszeiten, Saison-Einstellung) und, wenn du willst, ihre Trainings samt den eigenen Übungen und Notizen darin. Anwesenheiten gehen nie mit. Danach gleicht sich nichts mehr ab; wer etwas ändert, teilt neu.</p>
+  modal(`<h2>«${esc(tm.name)}» teilen</h2><p class="small">Du gibst eine Kopie weiter: Mannschaft (Name, Stufe, Farbe, Trainingszeiten, Saison-Einstellung) und, wenn du willst, ihre Trainings samt den eigenen Übungen und Notizen darin. Anwesenheiten und Spieler-Notizen gehen nie mit. Danach gleicht sich nichts mehr ab; wer etwas ändert, teilt neu.</p>
     <label>Trainings mitgeben<select data-b="tsh:which">${opt('up', `Nur kommende (${up})`, o.which)}${opt('all', `Alle (${all.length})`, o.which)}${opt('none', 'Keine', o.which)}</select></label>
     <label class="chk"><input type="checkbox" data-b="tsh:pl" ${o.pl ? 'checked' : ''}>Spielerliste mitgeben (Namen und J+S-Nummern)</label>
     ${o.pl ? '<p class="small warn">Der Link enthält dann Personendaten, auch von Kindern. Schicke ihn nur direkt an die Person, die ihn braucht – nicht in Gruppenchats und nicht öffentlich.</p>' : ''}
     <div class="qr">${qrSvg(url, 'Für einen QR-Code ist das zu umfangreich – nutze den Link oder die Datei.')}</div>
     <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
+}
+
+// ---------- Training abschliessen: Anwesenheit, Reflexion ----------
+// Optionales Feld am Training: t.refl = { at (ms, beim Abschliessen gesetzt), goal 0|1|2 (Ziel erreicht: nicht|teilweise|ja), int/conc/lead 1–5, items: { <itemId>: { v: 1|0|-1, why } }, good, change, players: { <playerId>: { k: 'plus'|'foerdern', note } } }.
+// t.reflSeen = true: die Karte «Vom letzten Training» wurde weggetippt. «Fertig» ist eine Reflexion mit at > 0; Entwürfe (ohne at) bleiben am Training, zählen aber nirgends.
+// Spieler-Notizen (refl.players) sind Personendaten: slim() entfernt sie beim Teilen (wie t.att); sie gehen nur im Mannschaftsraum (ganzes Training, verschlüsselt) und in die eigene Datensicherung mit.
+const RF_GOAL = ['Nicht', 'Teilweise', 'Ja'];
+const RF_SC = [
+  { k: 'int', t: 'Intensität', s: 'Intensität', ends: ['zu tief', 'passend', 'zu hoch'], txt: ['zu tief', 'eher tief', 'passend', 'eher hoch', 'zu hoch'], lo: 'zu tief', mid: 'passend', hi: 'zu hoch' },
+  { k: 'conc', t: 'Konzentration / Engagement der Spieler', s: 'Konzentration', ends: ['unkonzentriert', 'mittel', 'voll dabei'], txt: ['unkonzentriert', 'eher schwach', 'mittel', 'gut', 'voll dabei'], lo: 'schwach', mid: 'mittel', hi: 'gut' },
+  { k: 'lead', t: 'Eigene Leitung (Erklärungen, Organisation)', s: 'Leitung', ends: ['holprig', 'solide', 'souverän'], txt: ['holprig', 'eher holprig', 'solide', 'gut', 'souverän'], lo: 'holprig', mid: 'solide', hi: 'souverän' }
+];
+const RF_VOTE = [[1, '👍', 'Gut'], [0, '➖', 'Mittel'], [-1, '👎', 'Schlecht']];
+const RF_RECENT = 30 * 864e5;   // «Reflexion offen» nur bei Trainings der letzten 30 Tage
+const reflOf = t => t && t.refl && typeof t.refl === 'object' ? t.refl : null;
+const reflDone = t => { const r = reflOf(t); return !!(r && +r.at > 0); };
+const reflEdit = t => t.refl = reflOf(t) || {};
+const reflItem = (t, id) => { const m = (reflOf(t) || {}).items; return m && typeof m === 'object' && m[id] && typeof m[id] === 'object' ? m[id] : {}; };
+const reflPast = t => !!t.date && t.date <= iso(new Date());
+const reflKey = it => it.lib || norm(it.name || '');   // Bibliotheks-Schlüssel der Übung (Übungen aus dem RTP haben kein it.lib: dort ist es der normierte Name)
+function reflFill(t) {   // 5 Bereiche: Ziel, Skalen, Übungen, «Was hat funktioniert», «Was ändere ich»
+  const r = reflOf(t) || {};
+  return [[0, 1, 2].includes(r.goal), RF_SC.some(s => +r[s.k] > 0), t.items.some(i => [1, 0, -1].includes(reflItem(t, i.id).v)), !!String(r.good || '').trim(), !!String(r.change || '').trim()].filter(Boolean).length;
+}
+const reflProg = t => { const n = Math.min(5, reflFill(t)); return `<b>${n} von 5 ausgefüllt</b><span class="rfbarw"><i style="width:${n * 20}%"></i></span>`; };
+const reflUp = t => { const e = $('#rfprog'); if (e) e.innerHTML = reflProg(t); };
+const pk = (on, attrs, label, cls = '') => `<button class="pk ${cls} ${on ? 'sel' : ''}" aria-pressed="${on ? 'true' : 'false'}" ${attrs}>${label}</button>`;
+const pkMark = (el, on) => [...el.parentElement.children].forEach(b => { const s = b === el && on; b.classList.toggle('sel', s); b.setAttribute('aria-pressed', s ? 'true' : 'false'); });
+// Antwort-Texte, kompakt
+const reflScaleTxt = (r, s) => +r[s.k] >= 1 && +r[s.k] <= 5 ? s.txt[+r[s.k] - 1] : '';
+// Das Training davor (dieselbe Mannschaft, nächstes Datum davor), nur wenn es eine fertige Reflexion hat
+function reflPrev(t) {
+  const tm = teamOf(t); if (!tm || !t.date) return null;
+  const key = x => (x.date || '') + ' ' + (x.start || ''), before = teamTrainings(tm).filter(x => x !== t && x.date && key(x) < key(t)).sort((a, b) => key(b).localeCompare(key(a)))[0];
+  return before && reflDone(before) ? before : null;
+}
+function reflPrevCard(t) {
+  if (t.reflSeen) return '';
+  const p = reflPrev(t); if (!p) return '';
+  const ch = String(p.refl.change || '').trim(), bad = p.items.filter(i => reflItem(p, i.id).v === -1);
+  if (!ch && !bad.length) return '';
+  const d = pd(p.date);
+  return `<div class="card rfprev"><div class="row"><b class="grow">Vom letzten Training <span class="muted small">${WD[d.getDay()]}, ${dm(d)}</span></b><button class="btn sm" data-a="reflSeen" aria-label="Wegtippen">✕</button></div>
+    ${ch ? `<p><b>Ändern:</b> ${esc(ch)}</p>` : ''}${bad.map(i => { const w = String(reflItem(p, i.id).why || '').trim(); return `<p class="small">👎 ${esc(i.name || (TYPES[i.type] || TYPES.sonst)[0])}${w ? ' – ' + esc(w) : ''}</p>`; }).join('')}</div>`;
+}
+// Hinweis zu einer Übung aus allen Reflexionen (Bibliothek, Editor): «Zuletzt: 👍 2× · 👎 1× (‹Grund›)»
+function reflHint(key) {
+  if (!key) return '';
+  let up = 0, mid = 0, down = 0, why = '', whyAt = -1;
+  for (const t of DB.trainings) {
+    if (!reflDone(t)) continue;
+    for (const it of t.items) {
+      if (reflKey(it) !== key) continue; const x = reflItem(t, it.id);
+      if (x.v === 1) up++; else if (x.v === 0) mid++; else if (x.v === -1) { down++; const w = String(x.why || '').trim(), at = +t.refl.at || 0; if (w && at >= whyAt) { why = w; whyAt = at; } }
+    }
+  }
+  if (!up && !mid && !down) return '';
+  return `<p class="small rfhint">Zuletzt: ${[up && '👍 ' + up + '×', mid && '➖ ' + mid + '×', down && '👎 ' + down + '×'].filter(Boolean).join(' · ')}${why ? ` (‹${esc(why.length > 80 ? why.slice(0, 80) + '…' : why)}›)` : ''}</p>`;
+}
+// Symbol in Trainingsliste und Mannschaftsseite (tippen: Reflexion öffnen)
+function reflTag(t) {
+  if (S.sel || !t.date || !t.items.length || !reflPast(t)) return '';
+  if (reflDone(t)) return `<div class="rftag ok" role="button" data-a="reflOpen" data-id="${t.id}">✓ Reflexion${[0, 1, 2].includes(t.refl.goal) ? ' · Ziel: ' + RF_GOAL[t.refl.goal] : ''}</div>`;
+  if (pd(t.date).getTime() < Date.now() - RF_RECENT) return '';
+  return `<div class="rftag" role="button" data-a="reflOpen" data-id="${t.id}">✎ Reflexion offen</div>`;
+}
+const reflLink = t => !reflPast(t) ? '' : `<a class="card attlink noprint" href="#/t/${t.id}/end/2"><b>✎ Reflexion</b><span class="muted small">${reflDone(t) ? '✓ ausgefüllt' + ([0, 1, 2].includes(t.refl.goal) ? ' · Ziel: ' + RF_GOAL[t.refl.goal] : '') : 'noch offen'}</span><span class="muted">›</span></a>`;
+// Kompakte Darstellung (Übersicht, Druck); Spieler-Notizen erscheinen hier bewusst nicht
+function reflCompact(t) {
+  if (!reflDone(t)) return '';
+  const r = t.refl, l = [];
+  if ([0, 1, 2].includes(r.goal)) l.push(`<b>Ziel erreicht:</b> ${RF_GOAL[r.goal]}`);
+  const sc = RF_SC.filter(s => reflScaleTxt(r, s)).map(s => `${s.s}: ${reflScaleTxt(r, s)}`); if (sc.length) l.push(sc.map(esc).join(' · '));
+  const ex = RF_VOTE.map(([v, ic]) => { const n = t.items.filter(i => reflItem(t, i.id).v === v).map(i => { const w = v === -1 ? String(reflItem(t, i.id).why || '').trim() : ''; return esc(i.name || (TYPES[i.type] || TYPES.sonst)[0]) + (w ? ' (' + esc(w) + ')' : ''); }); return n.length ? `${ic} ${n.join(', ')}` : ''; }).filter(Boolean);
+  if (ex.length) l.push(ex.join('<br>'));
+  if (String(r.good || '').trim()) l.push(`<b>Hat funktioniert:</b> ${nl2br(r.good)}`);
+  if (String(r.change || '').trim()) l.push(`<b>Nächstes Mal ändern:</b> ${nl2br(r.change)}`);
+  return `<div class="card rfcard"><b>✎ Reflexion</b>${l.map(x => `<p class="small">${x}</p>`).join('')}</div>`;
+}
+// Anwesenheit (Schritt 1) und Reflexion (Schritt 2); Route /t/<id>/end/1 und /t/<id>/end/2
+function viewEnd(t, step) {
+  const tm = teamOf(t), pl = playersOf(tm), sub = esc(t.title || 'Ohne Titel');
+  if (step === 1) {
+    const body = !tm ? '<div class="card empty"><p>Dieses Training gehört zu keiner Mannschaft, darum gibt es keine Anwesenheitsliste.</p></div>'
+      : !pl.length ? `<div class="card empty"><p>Für «${esc(tm.name)}» gibt es noch keine Spielerliste. Du kannst sie später bei der Mannschaft anlegen.</p></div>` : `<h2>Wer war da?</h2>${attBody(t, tm, pl)}`;
+    return head('Training abschliessen', null, '', sub, ctxBar('end', 1)) + `<div class="muted small">${metaLine(t, true)}</div>${body}<button class="btn pri block" data-a="endNext">Weiter zur Reflexion ›</button>`;
+  }
+  const r = reflOf(t) || {}, b = rtpBlockOf(t), ziel = String((b && b.main && b.main.ziel) || t.ziel || '').replace(/^können /, ''), sp = (b && b.main && b.main.sp) || t.sp, prev = reflPrev(t);
+  const scales = RF_SC.map(s => `<div class="rfs"><div><b>${esc(s.t)}</b> <span class="muted small" id="rfv-${s.k}">${reflScaleTxt(r, s) ? '· ' + esc(reflScaleTxt(r, s)) : ''}</span></div>
+    <div class="scale">${[1, 2, 3, 4, 5].map(n => pk(+r[s.k] === n, `data-a="reflScale" data-k="${s.k}" data-v="${n}" aria-label="${esc(s.txt[n - 1])}"`, n, n === 3 ? 'mid' : '')).join('')}</div>
+    <div class="scale-l small muted"><span>${esc(s.ends[0])}</span><span>${esc(s.ends[1])}</span><span>${esc(s.ends[2])}</span></div></div>`).join('');
+  const rows = t.items.map(it => {
+    const x = reflItem(t, it.id), ty = TYPES[it.type] || TYPES.sonst;
+    return `<div class="rfx" style="--c:${ty[1]}"><div class="row"><span class="nm">${esc(it.name || ty[0])} <span class="muted small">${esc(it.min)}′</span></span><div class="pick3">${RF_VOTE.map(([v, ic, lab]) => pk(x.v === v, `data-a="reflVote" data-id="${esc(it.id)}" data-v="${v}" aria-label="${lab}"`, ic)).join('')}</div></div>
+      <label class="rfwhy" ${x.v === -1 ? '' : 'hidden'}>Warum / was ändern?<textarea data-b="rf:why:${esc(it.id)}" rows="2">${esc(x.why || '')}</textarea></label></div>`;
+  }).join('');
+  const present = pl.filter(p => attOf(t)[p.id]), plist = present.length ? present : pl, pm = r.players && typeof r.players === 'object' ? r.players : {};
+  const players = tm && pl.length ? `<details class="card rfpl" ${S.rfPl ? 'open' : ''}><summary><b>Spieler</b> <span class="muted small">optional – wer fiel auf?</span></summary>
+    <p class="small muted">Für Gespräche und Beurteilung. Die Notizen bleiben auf deinem Gerät (und im Mannschaftsraum) und gehen beim Teilen nie mit.</p>
+    ${plist.map(p => { const x = pm[p.id] && typeof pm[p.id] === 'object' ? pm[p.id] : {}; return `<div class="rfp"><div class="row"><span class="nm">${esc(pName(p))}</span><div class="pick3 wide">${pk(x.k === 'plus', `data-a="reflPl" data-id="${esc(p.id)}" data-k="plus"`, '⭐ Stark')}${pk(x.k === 'foerdern', `data-a="reflPl" data-id="${esc(p.id)}" data-k="foerdern"`, '🌱 Fördern')}</div></div>
+      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(p.first || pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
+  return head('Training abschliessen', null, '', sub, ctxBar('end', 2)) + `<div class="muted small">${metaLine(t, true)}</div>
+  ${prev && String(prev.refl.change || '').trim() ? `<div class="card rfprev small"><b>Dein Vorsatz vom letzten Mal:</b> ${esc(String(prev.refl.change).trim())}</div>` : ''}
+  <div class="card"><h3 class="nomargin">Ziel erreicht?</h3>${ziel || sp ? `<p class="small rfz">${sp ? `<b>${esc(sp)}</b> – ` : ''}${ziel ? 'Die Spieler*innen können ' + esc(ziel) : ''}</p>` : ''}
+    <div class="pick3">${RF_GOAL.map((l, i) => pk(r.goal === i, `data-a="reflGoal" data-v="${i}"`, l)).join('')}</div></div>
+  <div class="card"><h3 class="nomargin">Wie war das Training?</h3>${scales}</div>
+  ${t.items.length ? `<div class="card"><h3 class="nomargin">Übungen</h3><p class="small muted nomargin">Ein Tipp pro Übung. Das taucht bei der Übung wieder auf.</p>${rows}</div>` : ''}
+  <div class="card"><label class="nomargin">Was hat funktioniert? (1 Satz)<textarea data-b="rf:good" rows="2" placeholder="z.B. Die Passübung lief flüssig, alle waren aktiv.">${esc(r.good || '')}</textarea></label>
+    <label>Was ändere ich nächstes Mal? (1 konkreter Punkt)<textarea data-b="rf:change" rows="2" placeholder="z.B. Station 2 kleiner machen und mehr Pässe verlangen.">${esc(r.change || '')}</textarea></label></div>
+  ${players}
+  <div class="rfbar"><div class="rfprog" id="rfprog">${reflProg(t)}</div><button class="btn pri" data-a="reflSave">Speichern und abschliessen</button></div>`;
+}
+// Rückblick auf der Mannschaftsseite: letzte Reflexionen und Häufigkeiten
+function rbCard(tm) {
+  const ts = teamTrainings(tm).filter(reflDone).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (+b.refl.at || 0) - (+a.refl.at || 0)), last = ts.slice(0, 5), rec = ts.slice(0, 10);
+  const freq = s => { const v = rec.map(t => +t.refl[s.k]).filter(n => n >= 1 && n <= 5); if (v.length < 3) return ''; const lo = v.filter(n => n <= 2).length, hi = v.filter(n => n >= 4).length, m = v.length - lo - hi, h = v.length / 2; const w = lo > h ? s.lo : hi > h ? s.hi : m > h ? s.mid : ''; return w ? `${s.s} meist ${w}` : ''; };
+  const g = [0, 1, 2].map(i => [i, rec.filter(t => t.refl.goal === i).length]).filter(x => x[1]), fl = [...RF_SC.map(freq), g.length ? 'Ziel erreicht: ' + g.reverse().map(([i, n]) => RF_GOAL[i] + ' ' + n + '×').join(' · ') : ''].filter(Boolean);
+  return `<details class="card tsec" data-k="rb" ${S.tsec.has('rb') ? 'open' : ''}><summary><b>Rückblick</b> <span class="muted small">${ts.length ? ts.length + (ts.length === 1 ? ' Reflexion' : ' Reflexionen') : 'noch keine Reflexion'}</span></summary>
+    ${ts.length ? `${fl.length ? `<p class="small">${fl.map(esc).join('<br>')}</p>` : ''}${last.map(t => { const d = pd(t.date), r = t.refl, int = reflScaleTxt(r, RF_SC[0]), ch = String(r.change || '').trim(); return `<a class="rbrow" href="#/t/${t.id}/end/2"><span class="small muted">${WD[d.getDay()]}, ${dm(d)}</span> ${[[0, 1, 2].includes(r.goal) && 'Ziel: ' + RF_GOAL[r.goal], int && 'Intensität: ' + int].filter(Boolean).map(esc).join(' · ')}${ch ? `<div class="small">Ändern: ${esc(ch)}</div>` : ''}</a>`; }).join('')}`
+      : '<p class="small muted">Nach dem Hallenmodus («Training beenden») oder über «Reflexion» bei einem vergangenen Training. Hier siehst du dann die letzten fünf Rückblicke und was sich wiederholt.</p>'}</details>`;
 }
 
 // ---------- Ansicht: Mehr ----------
@@ -1145,7 +1269,7 @@ function viewMore() {
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
     <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
-  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern und Anwesenheiten gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> Auf der Mannschaftsseite kannst du eine Mannschaft mit Co-Trainern abgleichen. Die Daten – auch Spielerliste und Anwesenheit – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
+  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern, Anwesenheiten und Notizen zu Spielern (aus der Reflexion) gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten und Spieler-Notizen nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> Auf der Mannschaftsseite kannst du eine Mannschaft mit Co-Trainern abgleichen. Die Daten – auch Spielerliste, Anwesenheit und Reflexionen – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
   <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist nur auf diesem Gerät gespeichert.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
   <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
 }
@@ -1164,7 +1288,7 @@ async function unpack(s) {
   if (s[0] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   return JSON.parse(new TextDecoder().decode(bytes));
 }
-const slim = t => { const c = JSON.parse(JSON.stringify(t)); delete c.att; c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };   // Anwesenheit (t.att) bleibt auf dem Gerät
+const slim = t => { const c = JSON.parse(JSON.stringify(t)); delete c.att; delete c.reflSeen; if (c.refl && typeof c.refl === 'object') delete c.refl.players; c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };   // Anwesenheit (t.att) und Spieler-Notizen der Reflexion (t.refl.players) bleiben auf dem Gerät
 const saveBlob = (name, blob) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
 const download = (name, obj) => saveBlob(name, new Blob([JSON.stringify(obj)], { type: 'application/json' }));
 const appUrl = () => location.origin + location.pathname;
@@ -1216,7 +1340,7 @@ function doImport() {
   for (const t of d.t) {
     if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta);
     const i = DB.trainings.findIndex(x => x.id === t.id);
-    if (i >= 0) { const o = DB.trainings[i]; if (!t.att && o.att) t.att = o.att; if (!t.jsType && o.jsType) t.jsType = o.jsType; DB.trainings[i] = t; } else DB.trainings.push(t);   // eigene Anwesenheit bleibt erhalten
+    if (i >= 0) { const o = DB.trainings[i]; if (!t.att && o.att) t.att = o.att; if (!t.jsType && o.jsType) t.jsType = o.jsType; if (o.refl && !t.refl) t.refl = o.refl; else if (o.refl && o.refl.players && t.refl && typeof t.refl === 'object' && !t.refl.players) t.refl.players = o.refl.players; if (o.reflSeen && !t.reflSeen) t.reflSeen = o.reflSeen; DB.trainings[i] = t; } else DB.trainings.push(t);   // eigene Anwesenheit bleibt erhalten
   }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
@@ -1402,7 +1526,7 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow']);
+const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
@@ -1414,7 +1538,7 @@ function roApply() {
 function spCard(tm) {
   if (!SYNC_ON) return '';
   const sp = spOf(tm.id), id = esc(tm.id);
-  if (!sp) return `<div class="card spcard"><b>🔄 Mit Co-Trainern abgleichen</b><p class="small">Alle, die deinen Einladungslink haben, sehen dieselben Daten dieser Mannschaft – auch wenn jemand etwas ändert. Die Daten liegen verschlüsselt auf einem Server, der Server sieht keine Namen. Spielerliste und Anwesenheit gehen mit.</p><button class="btn pri" data-a="spSetup" data-k="${id}">Mannschaftsraum einrichten</button></div>`;
+  if (!sp) return `<div class="card spcard"><b>🔄 Mit Co-Trainern abgleichen</b><p class="small">Alle, die deinen Einladungslink haben, sehen dieselben Daten dieser Mannschaft – auch wenn jemand etwas ändert. Die Daten liegen verschlüsselt auf einem Server, der Server sieht keine Namen. Spielerliste, Anwesenheit und Reflexionen (auch Notizen zu Spielern) gehen mit.</p><button class="btn pri" data-a="spSetup" data-k="${id}">Mannschaftsraum einrichten</button></div>`;
   const o = sp.role === 'o';
   return `<div class="card spcard"><div class="row"><b>🔄 Abgleich mit Co-Trainern</b><span class="chip">${esc(SP_ROLE[sp.role] || '')}</span></div><div class="small" data-spst="${id}">${esc(spStatus(tm.id))}</div>
     <div class="row wrap"><button class="btn" data-a="spNow" data-k="${id}">Jetzt abgleichen</button>${o ? `<button class="btn" data-a="spInvite" data-k="${id}" data-r="w">Co-Trainer einladen</button><button class="btn" data-a="spInvite" data-k="${id}" data-r="r">Nur-Lesen-Link</button>` : `<button class="btn" data-a="spLeave" data-k="${id}">Abgleich beenden</button>`}</div>
@@ -1526,7 +1650,7 @@ function render() {
     const t = getT(p[1]); tab = '/';
     if (t) { const tmx = teamOf(t), spx = SYNC_ON && tmx && spOf(tmx.id); if (!(spx && spx.role === 'r')) swEnsure(t); }   // Swiss-Way-Beschreibung erzeugen (nicht bei «Nur lesen»)
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
-    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else html = viewEdit(t);
+    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else if (p[2] === 'end') html = viewEnd(t, +p[3] === 2 ? 2 : 1); else html = viewEdit(t);
   } else if (p[0] === 'lib') {
     if (p[1] === 'new') html = viewLibForm(); else if (p[1] === 'edit') html = viewLibForm(p[2]);
     else if (p[1] === 'x') { const e = libGet(p.slice(2).join('/')); html = e ? viewLibItem(e) : head('Übung', '/lib') + '<p class="muted center">Übung nicht gefunden.</p>'; }
@@ -1607,7 +1731,7 @@ const A = {
   addI() { const t = curT(), it = mkItem('gp', '', 15); it.g.text = goalieFocus('gp', t.sp, t.ef, t.stage); t.items.push(it); S.open.add(it.id); touch(t); render(); },
   addG() { const t = curT(); S.pick = t.id; S.lib.kind = 'goalie'; S.lib.stage = t.stage; S.lib.sp = ''; go('/lib'); },
   pick() { const t = curT(); S.pick = t.id; S.lib.stage = t.stage; if (S.lib.kind === 'goalie') S.lib.kind = ''; go('/lib'); },
-  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
+  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; delete c.refl; delete c.reflSeen; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
   delT() { const t = curT(); removeTrainings([t]); go('/'); },
   toastAct() { const fn = toast.fn; toast.fn = null; $('#toast').className = ''; fn && fn(); },
   teamF(el) { S.team = el.dataset.k; render.seasonScrolled = false; render(); },
@@ -1733,8 +1857,29 @@ const A = {
   runReset() { runSet(curT(), S.run.i); render(); },
   runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); runKeep(); render(); scrollTo(0, 0); },
   runExit() { wakeLock(false); S.run = null; runKeep(); },
+  runEnd() { const t = curT(); if (!t) return; wakeLock(false); S.run = null; runKeep(); go(`/t/${t.id}/end/${playersOf(teamOf(t)).length ? 1 : 2}`); scrollTo(0, 0); },   // letzte Übung: Training beenden -> Anwesenheit (ohne Spielerliste gleich Reflexion)
+  endNext() { const t = curT(); if (!t) return; go(`/t/${t.id}/end/2`); scrollTo(0, 0); },
+  endLater() { const t = curT(); go(t ? '/t/' + t.id : '/'); },
+  reflOpen(el) { go(`/t/${el.dataset.id}/end/2`); scrollTo(0, 0); },
+  reflGoal(el) { const t = curT(), r = reflEdit(t), v = +el.dataset.v; if (r.goal === v) delete r.goal; else r.goal = v; pkMark(el, r.goal === v); touch(t); reflUp(t); },
+  reflScale(el) {
+    const t = curT(), r = reflEdit(t), k = el.dataset.k, v = +el.dataset.v, s = RF_SC.find(x => x.k === k); if (!s) return;
+    if (+r[k] === v) delete r[k]; else r[k] = v; pkMark(el, +r[k] === v); const e = $('#rfv-' + k); if (e) e.textContent = reflScaleTxt(r, s) ? '· ' + reflScaleTxt(r, s) : ''; touch(t); reflUp(t);
+  },
+  reflVote(el) {
+    const t = curT(), id = el.dataset.id, v = +el.dataset.v; if (!spSafe(id)) return; const r = reflEdit(t); r.items = r.items && typeof r.items === 'object' ? r.items : {};
+    const x = r.items[id] = r.items[id] && typeof r.items[id] === 'object' ? r.items[id] : {}; if (x.v === v) delete x.v; else x.v = v; pkMark(el, x.v === v);
+    const w = el.closest('.rfx').querySelector('.rfwhy'); if (w) w.hidden = x.v !== -1; if (x.v === undefined && !String(x.why || '').trim()) delete r.items[id]; touch(t); reflUp(t);
+  },
+  reflPl(el) {
+    const t = curT(), id = el.dataset.id, k = el.dataset.k === 'plus' ? 'plus' : 'foerdern'; if (!spSafe(id)) return; const r = reflEdit(t); r.players = r.players && typeof r.players === 'object' ? r.players : {};
+    const x = r.players[id] = r.players[id] && typeof r.players[id] === 'object' ? r.players[id] : {}; if (x.k === k) delete x.k; else x.k = k; pkMark(el, x.k === k);
+    const w = el.closest('.rfp').querySelector('.rfwhy'); if (w) w.hidden = !x.k; if (!x.k && !String(x.note || '').trim()) delete r.players[id]; touch(t);
+  },
+  reflSave() { const t = curT(), r = reflEdit(t); r.at = Date.now(); touch(t); S.rfPl = false; done('Reflexion gespeichert. Sie erscheint beim nächsten Training und bei den Übungen wieder.', '/t/' + t.id); },
+  reflSeen() { const t = curT(); if (!t) return; t.reflSeen = true; touch(t); render(); },
 };
-document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('tsec')) ev.target.open ? S.tsec.add(ev.target.dataset.k) : S.tsec.delete(ev.target.dataset.k); else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
+document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('rfpl')) S.rfPl = ev.target.open; else if (c.contains('tsec')) ev.target.open ? S.tsec.add(ev.target.dataset.k) : S.tsec.delete(ev.target.dataset.k); else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;
@@ -1762,6 +1907,12 @@ function onInput(ev) {
     }
   }
   else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; DB.notes[key].u = Date.now(); if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
+  else if (k === 'rf') {   // Reflexion: Freitexte, Warum-Feld je Übung, Notiz je Spieler
+    const t = curT(); if (!t) return; const r = reflEdit(t), val = String(v).slice(0, 2000);
+    if (a === 'good' || a === 'change') r[a] = val;
+    else if ((a === 'why' || a === 'pn') && spSafe(b)) { const f = a === 'why' ? 'items' : 'players'; r[f] = r[f] && typeof r[f] === 'object' ? r[f] : {}; const x = r[f][b] = r[f][b] && typeof r[f][b] === 'object' ? r[f][b] : {}; x[a === 'why' ? 'why' : 'note'] = val; }
+    touch(t); reflUp(t);
+  }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { c[b] = v; syncCustom(c); } }
   else if (k === 'pl') S.pf[a] = v;
