@@ -90,7 +90,7 @@ function matchDay(ts, sess) {   // ts: Trainings der Mannschaft an einem Tag, se
 function pickSession(tm, date, self) {
   const wd = pd(date).getDay(), ss = teamSessions(tm, true).filter(s => s.wd === wd); if (!ss.length) return null; if (ss.length === 1) return ss[0];
   const byTime = self && self.start && ss.find(s => s.time === self.start); if (byTime) return byTime;
-  const m = matchDay(teamTrainings(tm).filter(t => t.date === date && t !== self), ss), i = m.hit.findIndex(h => !h);
+  const m = matchDay(teamTrainings(tm).filter(t => t.date === date && t !== self && !isMatch(t)), ss), i = m.hit.findIndex(h => !h);
   return ss[i >= 0 ? i : 0];
 }
 // Mannschaft auf ein Training anwenden: Ort/Start (nur wenn leer) von der Einheit des Datums (oder gegebenen Einheit), sonst von den gemeinsamen Vorgaben; neu = auch die Dauer (t.min) der Einheit
@@ -109,7 +109,8 @@ const playersOf = tm => Array.isArray(tm && tm.players) ? tm.players : [];
 const pName = p => [p.first, p.last].filter(Boolean).join(' ') || 'Ohne Namen';
 const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), jsnr: String(p.jsnr || '').replace(/\D/g, '').slice(0, 12), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
 const JS_TYPES = ['Training', 'Wettkampf', 'Trainingstag'];
-const jsTypeOf = t => JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
+const isMatch = t => !!t && t.kind === 'match';   // Wettkampf statt Training (Abschnitt «Wettkämpfe»)
+const jsTypeOf = t => isMatch(t) ? 'Wettkampf' : JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
 const attOf = t => t.att && typeof t.att === 'object' ? t.att : {};
 const attCount = (t, tm) => playersOf(tm).filter(p => attOf(t)[p.id]).length;
 const teamMeta = (tm, withPlayers) => { const c = JSON.parse(JSON.stringify(tm)); if (!withPlayers) delete c.players; return c; };
@@ -421,7 +422,7 @@ function itemFromLib(e, t) {
 // ---------- UI-Helfer ----------
 function toast(msg, act, fn) { const el = $('#toast'); el.innerHTML = esc(msg) + (act ? ` <button data-a="toastAct">${esc(act)}</button>` : ''); toast.fn = fn; el.className = act ? 'on act' : 'on'; clearTimeout(toast.t); toast.t = setTimeout(() => el.className = '', act ? 7000 : 2400); }
 const teamDot = tm => `<span class="dot" style="background:${esc(tm.color)}"></span>`;
-const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && (tm || t.team) ? `${tm ? teamDot(tm) : ''}<b>${esc(tm ? tm.name : t.team)}</b> · ` : ''}${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}`; };
+const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && (tm || t.team) ? `${tm ? teamDot(tm) : ''}<b>${esc(tm ? tm.name : t.team)}</b> · ` : ''}${[t.date ? fmtDate(t.date) : 'ohne Datum', tTime(t), t.ort, tSub(t)].filter(Boolean).map(esc).join(' · ')}`; };
 const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/cal', 'Kalender', 'cal'], ['/season', 'Saison', 'season']].filter(([h]) => h !== '/' || !ctxTeam()).map(([h, l, k]) => `<a href="#${sib(h)}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
 // Trainings: drei Ansichten derselben Trainings (Liste | Kalender | Saison). Titel, «+ Neu» und der Mannschaftsfilter (S.team, gilt auch für die Saison-Konfiguration) sind überall gleich.
 const tFilter = () => { if (S.team && !teamById(S.team)) S.team = ''; return S.team || ''; };
@@ -434,7 +435,7 @@ function trTop(cur, extra = '') {   // Kopf der drei Ansichten; im Neu-Ablauf «
   if (ct) return head(ct.name, null, `<button class="btn pri" data-a="newT" data-team="${esc(ct.id)}">+ Neu</button>`, cur === 'cal' ? 'Kalender' : 'Saison', seg(cur)) + extra;
   return head('Trainings', null, `<button class="btn pri" data-a="newT" data-team="${esc(tFilter())}">+ Neu</button>`, '', seg(cur) + teamChips(true)) + extra;
 }
-const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
+const grpKey = t => `${t.team || ''}|${isMatch(t) ? 'wk' : t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
 function removeTrainings(list) {
   if (!list.length) return; const ids = new Set(list.map(t => t.id));
@@ -490,7 +491,7 @@ function tokenHref(i, ch) {
     : ty === 'b' ? mk('/rtp/' + a + '/' + b, pre) : ty === 'x' ? mk('/lib/x/' + encodeURIComponent(tokKey(a)), pre) : '/';
 }
 const parentOf = r => r.chain.length ? tokenHref(r.chain.length - 1, r.chain) : '/';   // Adresse der Ansicht, aus der man kam
-const trainingLabel = t => t.date ? 'Training ' + dm(pd(t.date)) : (t.title || 'Training');
+const trainingLabel = t => t.date ? (isMatch(t) ? 'Wettkampf ' : 'Training ') + dm(pd(t.date)) : (t.title || (isMatch(t) ? 'Wettkampf' : 'Training'));
 function chainCrumbs(ch) {
   const out = [];
   ch.forEach((tk, i) => {
@@ -550,7 +551,7 @@ const head = (title, back, right = '', sub = '', bar = '') => `<header class="to
 function ctxBar(step) {
   const f = S.flow, pt = S.pick && getT(S.pick);
   if (step === 'plan') return `<div class="ctx"><span class="grow"><b>Ganzen Block planen</b><br>Schritt ${arguments[1]} von 3: ${['Mannschaft und Block wählen', 'Starttermin wählen', 'Vorschau prüfen und anlegen'][arguments[1] - 1]}</span><button class="btn sm" data-a="planCancel">Abbrechen</button><div class="steps">${[1, 2, 3].map(i => `<i class="${i <= arguments[1] ? 'on' : ''}"></i>`).join('')}</div></div>`;
-  if (step === 'end') return `<div class="ctx"><span class="grow"><b>Training abschliessen</b><br>Schritt ${arguments[1]} von 2: ${['Anwesenheit', 'Reflexion'][arguments[1] - 1]}</span><button class="btn sm" data-a="endLater">Später</button><div class="steps">${[1, 2].map(i => `<i class="${i <= arguments[1] ? 'on' : ''}"></i>`).join('')}</div></div>`;
+  if (step === 'end') return `<div class="ctx"><span class="grow"><b>${isMatch(getT(route().p[1])) ? 'Wettkampf' : 'Training'} abschliessen</b><br>Schritt ${arguments[1]} von 2: ${['Anwesenheit', 'Reflexion'][arguments[1] - 1]}</span><button class="btn sm" data-a="endLater">Später</button><div class="steps">${[1, 2].map(i => `<i class="${i <= arguments[1] ? 'on' : ''}"></i>`).join('')}</div></div>`;
   if (pt) return `<div class="ctx"><span class="grow">Übung wählen für <b>${esc(pt.title)}</b></span><button class="btn sm" data-a="pickCancel">Abbrechen</button></div>`;
   if (!f) return '';
   const rtp = f.k === 'rtp', n = step === 'train' ? 2 : 1;
@@ -565,12 +566,12 @@ function viewHome() {
   const today = iso(new Date()), f = tFilter();
   const ts = DB.trainings.filter(t => !f || (teamOf(t) || {}).id === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
   S.visible = ts.map(t => t.id);
-  const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div>
+  const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div>
     <div class="muted small">${metaLine(t, true)}</div>${reflTag(t)}
     <div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div>`;
   const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#${kid('/t/' + t.id)}">${inner(t)}</a>`; };
   const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
-  const gtitle = g => { const t = g[0]; return [t.team, t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
+  const gtitle = g => { const t = g[0]; return [t.team, isMatch(t) ? 'Wettkämpfe' : t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
   return trTop('list', doneBar('/')) + (DB.trainings.length ? `
     ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button><button class="btn sm" data-a="selMode">Fertig</button></div>` : `<div class="row"><span class="small muted grow">${ts.length} Training${ts.length === 1 ? '' : 's'}</span><button class="btn sm" data-a="selMode">Auswählen</button></div>`}
     ${ts.length ? [...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('') : '<p class="muted center">Für diese Mannschaft gibt es noch keine Trainings.</p>'}` : `
@@ -701,7 +702,7 @@ function goalieHtml(g, full) {
 function viewRead(t) {
   let m = 0;
   return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`, esc(t.title || 'Ohne Titel'), tNav(t, true)) + `
-  <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
+  <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), tTime(t), t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
     ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
   ${rtpSummary(t)}${matCard(t)}
@@ -919,14 +920,14 @@ function missChips(r, byDate, st) {
 const wkSort = (a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '');
 function wkLine(t, showTeam) {   // ein Training in der Wochenkarte
   const tm = showTeam && teamOf(t);
-  return `<a class="wkt ${t.date && t.date < iso(new Date()) ? 'past' : ''}" href="#${kid('/t/' + t.id)}"><span class="wd">${t.date ? WD[pd(t.date).getDay()] + ' ' + dm(pd(t.date)) : 'ohne Datum'}</span><span class="wt"><b>${tm ? teamDot(tm) : ''}${esc(t.title || 'Ohne Titel')}</b><span class="small muted">${esc([tm && tm.name, t.start && `${t.start}–${endTime(t)}`, t.ort].filter(Boolean).join(' · ') || 'ohne Uhrzeit')}</span></span><span class="muted">${total(t)}′</span></a>`;
+  return `<a class="wkt ${t.date && t.date < iso(new Date()) ? 'past' : ''}" href="#${kid('/t/' + t.id)}"><span class="wd">${t.date ? WD[pd(t.date).getDay()] + ' ' + dm(pd(t.date)) : 'ohne Datum'}</span><span class="wt"><b>${tm ? teamDot(tm) : ''}${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="small muted">${esc([tm && tm.name, tTime(t), t.ort].filter(Boolean).join(' · ') || 'ohne Uhrzeit')}</span></span><span class="muted">${tMin(t)}</span></a>`;
 }
 function viewSeason() {
   const tf = tFilter(), tm = teamById(tf), flow = !!(S.flow && S.flow.k === 'season'), plan = !!tm || !DB.teams.length;   // geplant wird für eine Mannschaft (oder ohne Mannschaften mit der allgemeinen Konfiguration)
   const y = seasonYear(), winFrom = seasonDefault(y), winTo = (y + 1) + '-04-30', today = iso(monday(new Date())), nowChip = chip('diese Woche');
   const all = DB.trainings.filter(t => !tm || (teamOf(t) || {}).id === tm.id), inWin = t => t.date && t.date >= winFrom && t.date <= winTo;
   const byDate = {}, byWeek = {};
-  all.forEach(t => { if (!t.date) return; (byDate[t.date] = byDate[t.date] || []).push(t); const k = iso(monday(pd(t.date))); (byWeek[k] = byWeek[k] || []).push(t); });
+  all.forEach(t => { if (!t.date) return; if (!isMatch(t)) (byDate[t.date] = byDate[t.date] || []).push(t); const k = iso(monday(pd(t.date))); (byWeek[k] = byWeek[k] || []).push(t); });   // Wettkämpfe belegen keine Trainingseinheit (nicht in byDate)
   const lines = (k, showTeam) => (byWeek[k] || []).sort(wkSort).map(t => wkLine(t, showTeam)).join('');
   const yearSel = `<label>Saison<select data-b="s:year" data-r="1">${[...new Set([seasonYearNow() - 1, seasonYearNow(), seasonYearNow() + 1, seasonYear()])].sort().map(v => opt(String(v), seasonLabel(v) + (v === seasonYearNow() ? ' (aktuell)' : ''), String(seasonYear()))).join('')}</select></label>`;
   const restCard = rest => rest.length ? `<h2>Weitere Trainings (${rest.length})</h2><div class="card">${rest.sort(wkSort).map(t => wkLine(t, !tm)).join('')}</div><p class="small muted">Diese Trainings liegen ausserhalb der Wochen oben oder haben kein Datum.</p>` : '';
@@ -988,7 +989,7 @@ const spanWeeks = (a, z) => Math.round((monday(pd(z)) - monday(pd(a))) / 6048e5)
 function planCompute(P) {
   const tm = teamById(P.team), st = stageById(P.stage), b = st && st.blocks.find(x => x.nr === +P.block), c = { tm, st, b, items: [], skipped: [], hol: 0, holSess: 0, range: null, total: 0, noSess: false, dropped: 0, free: 0, fit: null };
   if (!b) return c;
-  const cfg = seasonCfgFor(tm), ts = DB.trainings.filter(t => t.date && (!tm || (teamOf(t) || {}).id === tm.id)), day = date => ts.filter(t => t.date === date);
+  const cfg = seasonCfgFor(tm), ts = DB.trainings.filter(t => t.date && !isMatch(t) && (!tm || (teamOf(t) || {}).id === tm.id)), day = date => ts.filter(t => t.date === date);
   const list = st.slots ? b.weeks.flatMap(w => w.trainings.map((_, i) => ({ w, idx: i }))) : Array.from({ length: 12 }, (_, i) => ({ w: null, idx: i }));
   c.total = list.length;
   const fit = c.fit = planFit(P, st, b, tm);
@@ -1105,11 +1106,11 @@ function viewCal() {
   const byDate = {}; DB.trainings.forEach(t => { if (!t.date) return; const tm = teamOf(t); if (tf && (!tm || tm.id !== tf)) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
   const first = new Date(c.y, c.m, 1), start = monday(first), weeks = Math.ceil(((first.getDay() + 6) % 7 + new Date(c.y, c.m + 1, 0).getDate()) / 7);
   const cells = []; for (let i = 0; i < weeks * 7; i++) {
-    const d = addDays(start, i), k = iso(d), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color);
-    cells.push(`<button class="cal-d ${d.getMonth() !== c.m ? 'oth' : ''} ${k === todayIso ? 'today' : ''} ${k === c.day ? 'sel' : ''}" data-a="calDay" data-d="${k}" aria-label="${WDL[d.getDay()]}, ${dm(d)}${ts.length ? ', ' + ts.length + ' Training' + (ts.length > 1 ? 's' : '') : ''}"><span class="n">${d.getDate()}</span><span class="dots">${cols.slice(0, 3).map(col => `<i style="background:${esc(col)}"></i>`).join('')}${cols.length > 3 ? `<b>+${cols.length - 3}</b>` : ''}</span></button>`);
+    const d = addDays(start, i), k = iso(d), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color), ms = ts.map(isMatch);
+    cells.push(`<button class="cal-d ${d.getMonth() !== c.m ? 'oth' : ''} ${k === todayIso ? 'today' : ''} ${k === c.day ? 'sel' : ''}" data-a="calDay" data-d="${k}" aria-label="${WDL[d.getDay()]}, ${dm(d)}${ts.length ? ', ' + ts.length + ' Training' + (ts.length > 1 ? 's' : '') : ''}"><span class="n">${d.getDate()}</span><span class="dots">${cols.slice(0, 3).map((col, j) => `<i${ms[j] ? ' class="m"' : ''} style="background:${esc(col)}"></i>`).join('')}${cols.length > 3 ? `<b>+${cols.length - 3}</b>` : ''}</span></button>`);
   }
   const day = c.day ? pd(c.day) : null, dts = day ? (byDate[c.day] || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')) : [];
-  const card = t => { const tm = teamOf(t); return `<a class="card tcard item" style="--c:${esc(tm ? tm.color : '#6b7785')}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${tm ? teamDot(tm) + '<b>' + esc(tm.name) + '</b> · ' : ''}${[t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ') || 'ohne Uhrzeit'}</div></a>`; };
+  const card = t => { const tm = teamOf(t); return `<a class="card tcard item" style="--c:${esc(tm ? tm.color : '#6b7785')}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div><div class="muted small">${tm ? teamDot(tm) + '<b>' + esc(tm.name) + '</b> · ' : ''}${[tTime(t), t.ort, tSub(t)].filter(Boolean).map(esc).join(' · ') || 'ohne Uhrzeit'}</div></a>`; };
   return trTop('cal') + `
   <div class="row calnav"><button class="btn" data-a="calNav" data-d="-1" aria-label="Voriger Monat">‹</button><b class="grow center">${MONTHS[c.m]} ${c.y}</b><button class="btn" data-a="calNav" data-d="1" aria-label="Nächster Monat">›</button><button class="btn sm" data-a="calToday">Heute</button></div>
   <div class="cal"><div class="cal-h">${[1, 2, 3, 4, 5, 6, 0].map(d => `<span>${WD[d]}</span>`).join('')}</div><div class="cal-g">${cells.join('')}</div></div>
@@ -1129,10 +1130,10 @@ function viewTeams() {
 function viewTeam(id) {
   const tm = teamById(id); if (!tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
   const today = iso(new Date()), all = teamTrainings(tm).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '')), up = all.filter(t => !t.date || t.date >= today), past = all.filter(t => t.date && t.date < today).reverse();
-  const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div>${reflTag(t)}<div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
+  const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div><div class="muted small">${metaLine(t, false)}</div>${reflTag(t)}<div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#${kid('/team/' + tm.id + '/edit')}">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
-  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
   ${spCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
@@ -1167,7 +1168,7 @@ function viewAtt(t) {
   const tm = teamOf(t), pl = playersOf(tm), hd = head('Anwesenheit', '/t/' + t.id, '', esc(t.title || 'Ohne Titel')) + `<div class="muted small">${metaLine(t, true)}</div>`;
   if (!tm) return hd + `<div class="card empty"><p>Dieses Training gehört zu keiner Mannschaft. Wähle im Training eine Mannschaft, dann kannst du ihre Spieler*innen abhaken.</p><p><a class="btn pri" href="#${kid('/t/' + t.id)}">Zum Training</a> <a class="btn" href="#/teams">Mannschaften</a></p></div>`;
   if (!pl.length) return hd + `<div class="card empty"><p>Für «${esc(tm.name)}» gibt es noch keine Spielerliste. Lege sie an, dann kannst du hier pro Training abhaken, wer da war.</p><p><button class="btn pri" data-a="toPlayers" data-k="${esc(tm.id)}">Zur Spielerliste</button></p></div>`;
-  return hd + `<div class="card"><label>J+S-Aktivitätstyp<select data-b="t:jsType">${JS_TYPES.map(k => opt(k, k, jsTypeOf(t))).join('')}</select></label><p class="small muted nomargin">Wird beim Export für J+S verwendet. Bei «Wettkampf» und «Trainingstag» bleiben Startzeit und Ort in der Datei leer.</p></div>
+  return hd + `<div class="card">${isMatch(t) ? '<b>J+S-Aktivitätstyp: Wettkampf</b>' : `<label>J+S-Aktivitätstyp<select data-b="t:jsType">${JS_TYPES.map(k => opt(k, k, jsTypeOf(t))).join('')}</select></label>`}<p class="small muted nomargin">Wird beim Export für J+S verwendet. Bei «Wettkampf» und «Trainingstag» bleiben Startzeit und Ort in der Datei leer.</p></div>
   ${attBody(t, tm, pl)}
   <p class="small muted">Die Anwesenheit bleibt auf diesem Gerät und wird beim Teilen des Trainings nicht mitgegeben.</p>`;
 }
@@ -1289,7 +1290,8 @@ const reflEdit = t => t.refl = reflOf(t) || {};
 const reflItem = (t, id) => { const m = (reflOf(t) || {}).items; return m && typeof m === 'object' && m[id] && typeof m[id] === 'object' ? m[id] : {}; };
 const reflPast = t => !!t.date && t.date <= iso(new Date());
 const reflKey = it => it.lib || norm(it.name || '');   // Bibliotheks-Schlüssel der Übung (Übungen aus dem RTP haben kein it.lib: dort ist es der normierte Name)
-function reflFill(t) {   // 5 Bereiche: Ziel, Skalen, Übungen, «Was hat funktioniert», «Was ändere ich»
+function reflFill(t) {   // 5 Bereiche: Ziel, Skalen, Übungen, «Was hat funktioniert», «Was ändere ich» (Wettkampf: reflFillM)
+  if (isMatch(t)) return reflFillM(t);
   const r = reflOf(t) || {};
   return [[0, 1, 2].includes(r.goal), RF_SC.some(s => +r[s.k] > 0), t.items.some(i => [1, 0, -1].includes(reflItem(t, i.id).v)), !!String(r.good || '').trim(), !!String(r.change || '').trim()].filter(Boolean).length;
 }
@@ -1303,9 +1305,10 @@ const reflScaleTxt = (r, s) => +r[s.k] >= 1 && +r[s.k] <= 5 ? s.txt[+r[s.k] - 1]
 function reflPrev(t) {
   const tm = teamOf(t); if (!tm || !t.date) return null;
   const key = x => (x.date || '') + ' ' + (x.start || ''), before = teamTrainings(tm).filter(x => x !== t && x.date && key(x) < key(t)).sort((a, b) => key(b).localeCompare(key(a)))[0];
-  return before && reflDone(before) ? before : null;
+  return before && !isMatch(before) && reflDone(before) ? before : null;   // nach einem Wettkampf zeigt matchPrevCard dessen Punkte
 }
-function reflPrevCard(t) {
+function reflPrevCard(t) { return matchPrevCard(t) + trainingPrevCard(t); }
+function trainingPrevCard(t) {
   if (t.reflSeen) return '';
   const p = reflPrev(t); if (!p) return '';
   const ch = String(p.refl.change || '').trim(), bad = p.items.filter(i => reflItem(p, i.id).v === -1);
@@ -1330,8 +1333,8 @@ function reflHint(key) {
 }
 // Symbol in Trainingsliste und Mannschaftsseite (tippen: Reflexion öffnen)
 function reflTag(t) {
-  if (S.sel || !t.date || !t.items.length || !reflPast(t)) return '';
-  if (reflDone(t)) return `<div class="rftag ok" role="button" data-a="reflOpen" data-id="${t.id}">✓ Reflexion${[0, 1, 2].includes(t.refl.goal) ? ' · Ziel: ' + RF_GOAL[t.refl.goal] : ''}</div>`;
+  if (S.sel || !t.date || (!t.items.length && !isMatch(t)) || !reflPast(t)) return '';
+  if (reflDone(t)) return `<div class="rftag ok" role="button" data-a="reflOpen" data-id="${t.id}">✓ Reflexion${isMatch(t) && mResult(t) ? ' · ' + esc(mResult(t)) : ''}${[0, 1, 2].includes(t.refl.goal) ? ' · Ziel: ' + RF_GOAL[t.refl.goal] : ''}</div>`;
   if (pd(t.date).getTime() < Date.now() - RF_RECENT) return '';
   return `<div class="rftag" role="button" data-a="reflOpen" data-id="${t.id}">✎ Reflexion offen</div>`;
 }
@@ -1354,8 +1357,9 @@ function viewEnd(t, step) {
   if (step === 1) {
     const body = !tm ? '<div class="card empty"><p>Dieses Training gehört zu keiner Mannschaft, darum gibt es keine Anwesenheitsliste.</p></div>'
       : !pl.length ? `<div class="card empty"><p>Für «${esc(tm.name)}» gibt es noch keine Spielerliste. Du kannst sie später bei der Mannschaft anlegen.</p></div>` : `<h2>Wer war da?</h2>${attBody(t, tm, pl)}`;
-    return head('Training abschliessen', null, '', sub, ctxBar('end', 1)) + `<div class="muted small">${metaLine(t, true)}</div>${body}<button class="btn pri block" data-a="endNext">Weiter zur Reflexion ›</button>`;
+    return head(isMatch(t) ? 'Wettkampf abschliessen' : 'Training abschliessen', null, '', sub, ctxBar('end', 1)) + `<div class="muted small">${metaLine(t, true)}</div>${body}<button class="btn pri block" data-a="endNext">Weiter zur Reflexion ›</button>`;
   }
+  if (isMatch(t)) return viewEndMatch(t);
   const r = reflOf(t) || {}, b = rtpBlockOf(t), ziel = String((b && b.main && b.main.ziel) || t.ziel || '').replace(/^können /, ''), sp = (b && b.main && b.main.sp) || t.sp, prev = reflPrev(t);
   const scales = RF_SC.map(s => `<div class="rfs"><div><b>${esc(s.t)}</b> <span class="muted small" id="rfv-${s.k}">${reflScaleTxt(r, s) ? '· ' + esc(reflScaleTxt(r, s)) : ''}</span></div>
     <div class="scale">${[1, 2, 3, 4, 5].map(n => pk(+r[s.k] === n, `data-a="reflScale" data-k="${s.k}" data-v="${n}" aria-label="${esc(s.txt[n - 1])}"`, n, n === 3 ? 'mid' : '')).join('')}</div>
@@ -1383,12 +1387,150 @@ function viewEnd(t, step) {
 }
 // Rückblick auf der Mannschaftsseite: letzte Reflexionen und Häufigkeiten
 function rbCard(tm) {
-  const ts = teamTrainings(tm).filter(reflDone).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (+b.refl.at || 0) - (+a.refl.at || 0)), last = ts.slice(0, 5), rec = ts.slice(0, 10);
+  const ts = teamTrainings(tm).filter(reflDone).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (+b.refl.at || 0) - (+a.refl.at || 0)), last = ts.slice(0, 5), rec = ts.filter(t => !isMatch(t)).slice(0, 10);
   const freq = s => { const v = rec.map(t => +t.refl[s.k]).filter(n => n >= 1 && n <= 5); if (v.length < 3) return ''; const lo = v.filter(n => n <= 2).length, hi = v.filter(n => n >= 4).length, m = v.length - lo - hi, h = v.length / 2; const w = lo > h ? s.lo : hi > h ? s.hi : m > h ? s.mid : ''; return w ? `${s.s} meist ${w}` : ''; };
-  const g = [0, 1, 2].map(i => [i, rec.filter(t => t.refl.goal === i).length]).filter(x => x[1]), fl = [...RF_SC.map(freq), g.length ? 'Ziel erreicht: ' + g.reverse().map(([i, n]) => RF_GOAL[i] + ' ' + n + '×').join(' · ') : ''].filter(Boolean);
+  const g = [0, 1, 2].map(i => [i, rec.filter(t => t.refl.goal === i).length]).filter(x => x[1]), ml = mScore(ts.filter(isMatch).flatMap(mGames)), fl = [ml.n ? `Wettkämpfe: ${ml.s} S · ${ml.u} U · ${ml.v} N, Tore ${ml.gf}:${ml.ga}` : '', ...RF_SC.map(freq), g.length ? 'Ziel erreicht: ' + g.reverse().map(([i, n]) => RF_GOAL[i] + ' ' + n + '×').join(' · ') : ''].filter(Boolean);
   return `<details class="card tsec" data-k="rb" ${S.tsec.has('rb') ? 'open' : ''}><summary><b>Rückblick</b> <span class="muted small">${ts.length ? ts.length + (ts.length === 1 ? ' Reflexion' : ' Reflexionen') : 'noch keine Reflexion'}</span></summary>
-    ${ts.length ? `${fl.length ? `<p class="small">${fl.map(esc).join('<br>')}</p>` : ''}${last.map(t => { const d = pd(t.date), r = t.refl, int = reflScaleTxt(r, RF_SC[0]), ch = String(r.change || '').trim(); return `<a class="rbrow" href="#${kid('/t/' + t.id + '/end/2')}"><span class="small muted">${WD[d.getDay()]}, ${dm(d)}</span> ${[[0, 1, 2].includes(r.goal) && 'Ziel: ' + RF_GOAL[r.goal], int && 'Intensität: ' + int].filter(Boolean).map(esc).join(' · ')}${ch ? `<div class="small">Ändern: ${esc(ch)}</div>` : ''}</a>`; }).join('')}`
+    ${ts.length ? `${fl.length ? `<p class="small">${fl.map(esc).join('<br>')}</p>` : ''}${last.map(t => { const d = pd(t.date), r = t.refl, mt = isMatch(t), int = mt ? '' : reflScaleTxt(r, RF_SC[0]), ch = String(r.change || '').trim(); return `<a class="rbrow" href="#${kid('/t/' + t.id + '/end/2')}"><span class="small muted">${WD[d.getDay()]}, ${dm(d)}</span> ${[mt && '🏆 ' + (mResult(t) || 'Wettkampf'), [0, 1, 2].includes(r.goal) && 'Ziel: ' + RF_GOAL[r.goal], int && 'Intensität: ' + int].filter(Boolean).map(esc).join(' · ')}${ch ? `<div class="small">${mt ? 'Mitnehmen' : 'Ändern'}: ${esc(ch)}</div>` : ''}</a>`; }).join('')}`
       : '<p class="small muted">Nach dem Hallenmodus («Training beenden») oder über «Reflexion» bei einem vergangenen Training. Hier siehst du dann die letzten fünf Rückblicke und was sich wiederholt.</p>'}</details>`;
+}
+
+// ---------- Wettkämpfe ----------
+// Eintragstyp am Training: t.kind = 'match' (fehlt = Training). Ein Wettkampf hat keine Übungen (items bleibt []), keinen Hallenmodus, kein Material, keinen RTP-Überblick.
+// t.m = { art: 'Meisterschaft'|'Cup'|'Turnier'|'Freundschaftsspiel', opp: [Gegner, …] (Turnier: mehrere Spiele), ziel: 'Ziel für diesen Wettkampf' }; Datum, Anspielzeit (t.start), Ort und Notiz wie beim Training; J+S-Typ immer «Wettkampf».
+// Reflexion am Wettkampf: t.refl wie beim Training (at, goal, players) plus t.refl.m = { games: [{ opp, gf, ga }], sc: { ein, ums, spv, tg, co: 1–5 }, ph: { <Phase>: { v: 1|0|-1, w: Stichwort } }, take: [1–3 Punkte], st: { <playerId>: { g, a } } }.
+// refl.m.st (Tore/Assists je Spieler) sind Personendaten: slim() entfernt sie beim Teilen wie refl.players. t.reflSeenM = true: die Karte «Vom letzten Wettkampf» beim nächsten Training wurde weggetippt.
+const MATCH_ART = ['Meisterschaft', 'Cup', 'Turnier', 'Freundschaftsspiel'];
+const matchOf = t => { const m = t && t.m && typeof t.m === 'object' ? t.m : {}; return { art: MATCH_ART.includes(m.art) ? m.art : 'Meisterschaft', opp: Array.isArray(m.opp) && m.opp.length ? m.opp.map(x => String(x ?? '')) : [''], ziel: String(m.ziel || '') }; };
+const matchEdit = t => { t.m = { ...(t.m && typeof t.m === 'object' ? t.m : {}), ...matchOf(t) }; return t.m; };
+const matchTitle = t => { const m = matchOf(t), o = m.opp.map(x => x.trim()).filter(Boolean); return m.art === 'Turnier' ? 'Turnier' + (o.length ? ': ' + o.join(', ') : '') : m.art + (o.length ? ' gegen ' + o[0] : ''); };
+const tIco = t => isMatch(t) ? '🏆 ' : '';
+const tMin = t => isMatch(t) ? '' : total(t) + '′';
+const tTime = t => isMatch(t) ? (t.start || '') : t.start ? `${t.start}–${endTime(t)}` : '';
+const tSub = t => isMatch(t) ? [matchOf(t).art, matchOf(t).opp.map(x => x.trim()).filter(Boolean).join(', ')].filter(Boolean).join(' · ') : t.sp;
+const RF_MSC = [
+  { k: 'ein', t: 'Einsatz / Kampfgeist', s: 'Einsatz', ends: ['lasch', 'solide', 'kämpferisch'], txt: ['lasch', 'eher schwach', 'solide', 'stark', 'kämpferisch'] },
+  { k: 'ums', t: 'Umsetzung des Trainingsschwerpunkts', s: 'Schwerpunkt', ends: ['kaum', 'teils', 'klar'], txt: ['kaum', 'eher wenig', 'teils', 'meist', 'klar sichtbar'] },
+  { k: 'spv', t: 'Spielverständnis / Entscheidungen', s: 'Spielverständnis', ends: ['unsicher', 'wechselhaft', 'klar'], txt: ['unsicher', 'eher unsicher', 'wechselhaft', 'gut', 'klar'] },
+  { k: 'tg', t: 'Teamgeist / Kommunikation', s: 'Teamgeist', ends: ['einzeln', 'ok', 'als Team'], txt: ['einzeln', 'eher still', 'ok', 'gut', 'als Team'] },
+  { k: 'co', t: 'Coaching (eigene Leitung)', s: 'Coaching', ends: ['holprig', 'solide', 'souverän'], txt: ['holprig', 'eher holprig', 'solide', 'gut', 'souverän'] }
+];
+const RF_PH = [['ang', 'Angriff'], ['ver', 'Verteidigung'], ['um', 'Umschalten (Ball gewonnen / verloren)'], ['std', 'Standards'], ['pp', 'Powerplay / Boxplay'], ['gk', 'Goalie']];
+const mOf = t => { const r = reflOf(t); return r && r.m && typeof r.m === 'object' ? r.m : {}; };
+const reflEditM = t => { const r = reflEdit(t); r.m = r.m && typeof r.m === 'object' ? r.m : {}; return r.m; };
+const mGames = t => { const g = mOf(t).games; return Array.isArray(g) ? g.filter(x => x && typeof x === 'object') : []; };
+const numOk = v => v !== '' && v != null && isFinite(+v);
+const gRes = g => numOk(g.gf) && numOk(g.ga) ? (+g.gf > +g.ga ? 'Sieg' : +g.gf < +g.ga ? 'Niederlage' : 'Unentschieden') : '';
+const gTxt = g => numOk(g.gf) && numOk(g.ga) ? `${+g.gf}:${+g.ga} ${gRes(g)}` : '';
+function mScore(list) { const o = { n: 0, s: 0, u: 0, v: 0, gf: 0, ga: 0 }; for (const g of list) if (gRes(g)) { o.n++; o.gf += +g.gf; o.ga += +g.ga; if (+g.gf > +g.ga) o.s++; else if (+g.gf < +g.ga) o.v++; else o.u++; } return o; }
+const mScoreTxt = o => o.n ? `${o.gf}:${o.ga}` + (o.n > 1 ? ` (${o.s} S · ${o.u} U · ${o.v} N)` : ' ' + (o.s ? 'Sieg' : o.v ? 'Niederlage' : 'Unentschieden')) : '';
+const mResult = t => mScoreTxt(mScore(mGames(t)));
+function reflFillM(t) {   // 5 Bereiche: Resultat, Ziel, Skalen, Spielphasen, «Was nehmen wir mit?»
+  const r = reflOf(t) || {}, m = mOf(t), sc = m.sc || {}, ph = m.ph || {};
+  return [mGames(t).some(g => gRes(g)), [0, 1, 2].includes(r.goal), RF_MSC.some(s => +sc[s.k] > 0), RF_PH.some(([k]) => ph[k] && [1, 0, -1].includes(ph[k].v)), (Array.isArray(m.take) ? m.take : []).some(x => String(x || '').trim())].filter(Boolean).length;
+}
+// Schwerpunkt des aktuellen RTP-Blocks der Mannschaft zum Datum: nächstes Training mit RTP-Bezug (zuerst davor, sonst danach), sonst der Saisonplan
+function curBlockSp(tm, date) {
+  if (!tm) return '';
+  const ts = teamTrainings(tm).filter(x => x.rtp && x.date && !isMatch(x)), before = ts.filter(x => x.date <= date).sort((a, b) => b.date.localeCompare(a.date))[0], after = ts.filter(x => x.date > date).sort((a, b) => a.date.localeCompare(b.date))[0];
+  const b = rtpBlockOf(before || after); if (b) return b.main.sp || b.main.ef || '';
+  try { const r = seasonWeeks({ ...seasonCfgFor(tm) }, tm).find(x => x.key === iso(monday(pd(date)))); if (r && r.b && r.b.main) return r.b.main.sp || r.b.main.ef || ''; } catch (e) { /* ohne Vorschlag */ }
+  return '';
+}
+function newMatch(tm, date) {
+  const d = date || iso(new Date()), t = newTraining({ title: 'Wettkampf', kind: 'match', date: d, min: 0, stage: tm ? tm.stage : DB.stage, jsType: 'Wettkampf', m: { art: 'Meisterschaft', opp: [''], ziel: curBlockSp(tm, d) } });
+  if (tm) setTeam(t, tm);
+  t.title = matchTitle(t); save(); return t;
+}
+// Karte «Vom letzten Wettkampf» beim nächsten Training: nur wenn der Eintrag direkt davor ein Wettkampf mit fertiger Reflexion ist
+function matchPrev(t) {
+  if (t.reflSeenM || isMatch(t)) return null;
+  const tm = teamOf(t); if (!tm || !t.date) return null;
+  const key = x => (x.date || '') + ' ' + (x.start || ''), before = teamTrainings(tm).filter(x => x !== t && x.date && key(x) < key(t)).sort((a, b) => key(b).localeCompare(key(a)))[0];
+  return before && isMatch(before) && reflDone(before) ? before : null;
+}
+function matchPrevCard(t) {
+  const p = matchPrev(t); if (!p) return '';
+  const m = mOf(p), take = (Array.isArray(m.take) ? m.take : []).map(x => String(x || '').trim()).filter(Boolean), d = pd(p.date), res = mResult(p);
+  const bad = RF_PH.filter(([k]) => m.ph && m.ph[k] && m.ph[k].v === -1).map(([k, l]) => `${l}${String(m.ph[k].w || '').trim() ? ' (' + esc(String(m.ph[k].w).trim()) + ')' : ''}`);
+  if (!take.length && !bad.length) return '';
+  return `<div class="card rfprev"><div class="row"><b class="grow">Vom letzten Wettkampf <span class="muted small">${WD[d.getDay()]}, ${dm(d)}${res ? ' · ' + esc(res) : ''}</span></b><button class="btn sm" data-a="reflSeenM" aria-label="Wegtippen">✕</button></div>
+    ${take.length ? `<p class="nomargin"><b>Ins Training mitnehmen:</b></p><ul class="small">${take.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${bad.length ? `<p class="small">👎 ${bad.join(' · ')}</p>` : ''}</div>`;
+}
+// Wettkampf: Eintrag (Daten, Ziel, Anwesenheit, Abschluss); auch für /view, /run und /newex eines Wettkampfs
+function viewMatch(t) {
+  const m = matchOf(t), tn = m.art === 'Turnier', tm = teamOf(t);
+  const opp = tn ? `<div class="small muted" style="margin-top:10px">Gegner (ein Spiel pro Zeile)</div>${m.opp.map((o, i) => `<div class="row"><input data-b="mo:${i}" value="${esc(o)}" placeholder="Gegner ${i + 1}" aria-label="Gegner ${i + 1}">${m.opp.length > 1 ? `<button class="btn sm" data-a="matchDelOpp" data-i="${i}" aria-label="Gegner ${i + 1} entfernen">✕</button>` : ''}</div>`).join('')}<button class="btn sm" data-a="matchAddOpp">+ Spiel / Gegner</button>`
+    : `<label>Gegner<input data-b="mo:0" value="${esc(m.opp[0])}" placeholder="Gegner"></label>`;
+  return head('Wettkampf', null, '', esc(t.title || 'Wettkampf'), tNav(t)) + doneBar('/t/' + t.id) + reflPrevCard(t) + `
+  <div class="card item" style="--c:${esc(tm ? tm.color : '#6b7785')}"><div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Anspielzeit (optional)<input type="time" data-b="t:start" value="${esc(t.start)}"></label>
+      <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', tm ? tm.id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, tm ? tm.id : '')).join('')}${!tm && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort (optional)<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label></div>
+    <label>Art<select data-b="mt:art" data-r="1">${MATCH_ART.map(a => opt(a, a, m.art)).join('')}</select></label>${opp}
+    <label>Ziel für diesen Wettkampf<textarea data-b="mt:ziel" rows="2" placeholder="z.B. der Schwerpunkt des aktuellen Blocks">${esc(m.ziel)}</textarea></label>
+    <label>Notiz<textarea data-b="t:notes" rows="2">${esc(t.notes)}</textarea></label></div>
+  ${attLink(t)}${reflLink(t)}${reflCompactM(t)}
+  <button class="btn pri block" data-a="matchEnd">Wettkampf abschliessen</button>
+  <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
+}
+// Kompakte Darstellung der Wettkampf-Reflexion (Spieler-Notizen und Tore/Assists erscheinen bewusst nicht)
+function reflCompactM(t) {
+  if (!reflDone(t)) return '';
+  const r = t.refl, m = mOf(t), l = [], gl = mGames(t).filter(g => gRes(g));
+  if (gl.length) l.push(gl.map(g => `<b>${esc(g.opp || 'Spiel')}:</b> ${esc(gTxt(g))}`).join('<br>'));
+  if ([0, 1, 2].includes(r.goal)) l.push(`<b>Ziel erreicht:</b> ${RF_GOAL[r.goal]}${matchOf(t).ziel.trim() ? ' <span class="muted">(' + esc(matchOf(t).ziel.trim()) + ')</span>' : ''}`);
+  const sc = RF_MSC.filter(s => m.sc && +m.sc[s.k] >= 1 && +m.sc[s.k] <= 5).map(s => `${s.s}: ${s.txt[+m.sc[s.k] - 1]}`); if (sc.length) l.push(sc.map(esc).join(' · '));
+  const ph = RF_VOTE.map(([v, ic]) => { const n = RF_PH.filter(([k]) => m.ph && m.ph[k] && m.ph[k].v === v).map(([k, lb]) => esc(lb.split(' (')[0]) + (String(m.ph[k].w || '').trim() ? ' (' + esc(String(m.ph[k].w).trim()) + ')' : '')); return n.length ? `${ic} ${n.join(', ')}` : ''; }).filter(Boolean); if (ph.length) l.push(ph.join('<br>'));
+  const take = (Array.isArray(m.take) ? m.take : []).map(x => String(x || '').trim()).filter(Boolean); if (take.length) l.push(`<b>Ins Training mitnehmen:</b><br>${take.map(esc).join('<br>')}`);
+  return `<div class="card rfcard"><b>✎ Reflexion</b>${l.map(x => `<p class="small">${x}</p>`).join('')}</div>`;
+}
+// Wettkampf abschliessen, Schritt 2: ausführliche, aber schnell ausfüllbare Reflexion
+function viewEndMatch(t) {
+  const tm = teamOf(t), pl = playersOf(tm), r = reflOf(t) || {}, m = mOf(t), mm = matchOf(t), sub = esc(t.title || 'Wettkampf');
+  const gl = mGames(t).length ? mGames(t) : mm.opp.map(o => ({ opp: o.trim() }));
+  const games = gl.map((g, i) => `<div class="rfg"><div class="row"><input class="rfopp" data-b="rf:go:${i}" value="${esc(g.opp || '')}" placeholder="Gegner" aria-label="Gegner Spiel ${i + 1}">${gl.length > 1 ? `<button class="btn sm" data-a="mgDel" data-i="${i}" aria-label="Spiel ${i + 1} entfernen">✕</button>` : ''}</div>
+    <div class="rfsc"><label>Tore für<input type="number" inputmode="numeric" min="0" data-b="rf:gf:${i}" value="${esc(g.gf ?? '')}"></label><b>:</b><label>Tore gegen<input type="number" inputmode="numeric" min="0" data-b="rf:ga:${i}" value="${esc(g.ga ?? '')}"></label><span class="rfres" id="rfg-${i}">${esc(gRes(g))}</span></div></div>`).join('');
+  const sc = m.sc && typeof m.sc === 'object' ? m.sc : {};
+  const scales = RF_MSC.map(s => `<div class="rfs"><div><b>${esc(s.t)}</b> <span class="muted small" id="rfv-${s.k}">${+sc[s.k] >= 1 && +sc[s.k] <= 5 ? '· ' + esc(s.txt[+sc[s.k] - 1]) : ''}</span></div>
+    <div class="scale">${[1, 2, 3, 4, 5].map(n => pk(+sc[s.k] === n, `data-a="reflMScale" data-k="${s.k}" data-v="${n}" aria-label="${esc(s.txt[n - 1])}"`, n, n === 3 ? 'mid' : '')).join('')}</div>
+    <div class="scale-l small muted"><span>${esc(s.ends[0])}</span><span>${esc(s.ends[1])}</span><span>${esc(s.ends[2])}</span></div></div>`).join('');
+  const ph = m.ph && typeof m.ph === 'object' ? m.ph : {};
+  const phases = RF_PH.map(([k, lb]) => { const x = ph[k] && typeof ph[k] === 'object' ? ph[k] : {}; return `<div class="rfx"><div class="row"><span class="nm">${esc(lb)}</span><div class="pick3">${RF_VOTE.map(([v, ic, lab]) => pk(x.v === v, `data-a="reflMPh" data-k="${k}" data-v="${v}" aria-label="${lab}"`, ic)).join('')}</div></div>
+      <label class="rfwhy" ${[1, 0, -1].includes(x.v) ? '' : 'hidden'}>Stichwort (optional)<input data-b="rf:ph:${k}" value="${esc(x.w || '')}" maxlength="300"></label></div>`; }).join('');
+  const take = Array.isArray(m.take) ? m.take : [];
+  const present = pl.filter(p => attOf(t)[p.id]), plist = present.length ? present : pl, pm = r.players && typeof r.players === 'object' ? r.players : {}, st = m.st && typeof m.st === 'object' ? m.st : {};
+  const players = tm && pl.length ? `<details class="card rfpl" ${S.rfPl ? 'open' : ''}><summary><b>Spieler</b> <span class="muted small">optional – wer fiel auf? Tore und Assists</span></summary>
+    <p class="small muted">Für Gespräche und Beurteilung. Notizen, Tore und Assists bleiben auf deinem Gerät (und im Mannschaftsraum) und gehen beim Teilen nie mit.</p>
+    ${plist.map(p => { const x = pm[p.id] && typeof pm[p.id] === 'object' ? pm[p.id] : {}, s = st[p.id] && typeof st[p.id] === 'object' ? st[p.id] : {}; return `<div class="rfp"><div class="row"><span class="nm">${esc(pName(p))}</span><div class="pick3 wide">${pk(x.k === 'plus', `data-a="reflPl" data-id="${esc(p.id)}" data-k="plus"`, '⭐ Stark')}${pk(x.k === 'foerdern', `data-a="reflPl" data-id="${esc(p.id)}" data-k="foerdern"`, '🌱 Fördern')}</div></div>
+      <div class="rfst"><label>Tore<input type="number" inputmode="numeric" min="0" data-b="rf:pg:${esc(p.id)}" value="${esc(s.g ?? '')}"></label><label>Assists<input type="number" inputmode="numeric" min="0" data-b="rf:pa:${esc(p.id)}" value="${esc(s.a ?? '')}"></label></div>
+      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(p.first || pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
+  return head('Wettkampf abschliessen', null, '', sub, ctxBar('end', 2)) + `<div class="muted small">${metaLine(t, true)}</div>
+  <div class="card"><h3 class="nomargin">Resultat</h3>${games}${mm.art === 'Turnier' ? '<button class="btn sm" data-a="mgAdd">+ Spiel</button>' : ''}</div>
+  <div class="card"><h3 class="nomargin">Ziel erreicht?</h3>${mm.ziel.trim() ? `<p class="small rfz"><b>Ziel:</b> ${esc(mm.ziel.trim())}</p>` : '<p class="small muted rfz">Kein Ziel notiert – du kannst es im Eintrag ergänzen.</p>'}
+    <div class="pick3">${RF_GOAL.map((lb, i) => pk(r.goal === i, `data-a="reflGoal" data-v="${i}"`, lb)).join('')}</div></div>
+  <div class="card"><h3 class="nomargin">Wie war der Wettkampf?</h3>${scales}</div>
+  <div class="card"><h3 class="nomargin">Spielphasen</h3><p class="small muted nomargin">Ein Tipp pro Phase, das Stichwort ist freiwillig.</p>${phases}</div>
+  <div class="card"><h3 class="nomargin">Was nehmen wir ins Training mit?</h3><p class="small muted nomargin">1–3 Punkte. Sie erscheinen beim nächsten Training der Mannschaft.</p>
+    ${[0, 1, 2].map(i => `<label>${i + 1}.<input data-b="rf:take:${i}" value="${esc(take[i] || '')}" maxlength="300" placeholder="${i ? '(optional)' : 'z.B. Umschalten nach Ballgewinn'}"></label>`).join('')}</div>
+  ${players}
+  <div class="rfbar"><div class="rfprog" id="rfprog">${reflProg(t)}</div><button class="btn pri" data-a="reflSave">Speichern und abschliessen</button></div>`;
+}
+// Eingaben der Wettkampf-Reflexion (data-b = rf:<feld>:<nr oder Schlüssel>); true = behandelt
+function rfMatch(t, a, b, v) {
+  const m = reflEditM(t), txt = String(v).slice(0, 300);
+  if (a === 'go' || a === 'gf' || a === 'ga') {
+    const i = +b; if (!(i >= 0 && i < 30)) return true;
+    if (!Array.isArray(m.games) || !m.games.length) m.games = matchOf(t).opp.map(o => ({ opp: o.trim() }));
+    while (m.games.length <= i) m.games.push({ opp: '' });
+    const g = m.games[i]; if (a === 'go') g.opp = txt; else if (numOk(v) && +v >= 0 && +v < 100) g[a] = Math.floor(+v); else delete g[a];
+    const e = $('#rfg-' + i); if (e) e.textContent = gRes(g); return true;
+  }
+  if (a === 'take') { const i = +b; if (i >= 0 && i < 3) { m.take = Array.isArray(m.take) ? m.take : []; while (m.take.length <= i) m.take.push(''); m.take[i] = txt; } return true; }
+  if (a === 'ph' && RF_PH.some(x => x[0] === b)) { m.ph = m.ph && typeof m.ph === 'object' ? m.ph : {}; const x = m.ph[b] = m.ph[b] && typeof m.ph[b] === 'object' ? m.ph[b] : {}; x.w = txt; return true; }
+  if ((a === 'pg' || a === 'pa') && spSafe(b)) {
+    m.st = m.st && typeof m.st === 'object' ? m.st : {}; const x = m.st[b] = m.st[b] && typeof m.st[b] === 'object' ? m.st[b] : {}, f = a === 'pg' ? 'g' : 'a';
+    if (numOk(v) && +v >= 0 && +v < 100) x[f] = Math.floor(+v); else delete x[f]; if (!('g' in x) && !('a' in x)) delete m.st[b]; return true;
+  }
+  return false;
 }
 
 // ---------- Ansicht: Mehr ----------
@@ -1419,7 +1561,7 @@ async function unpack(s) {
   if (s[0] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   return JSON.parse(new TextDecoder().decode(bytes));
 }
-const slim = t => { const c = JSON.parse(JSON.stringify(t)); delete c.att; delete c.reflSeen; if (c.refl && typeof c.refl === 'object') delete c.refl.players; c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };   // Anwesenheit (t.att) und Spieler-Notizen der Reflexion (t.refl.players) bleiben auf dem Gerät
+const slim = t => { const c = JSON.parse(JSON.stringify(t)); delete c.att; delete c.reflSeen; delete c.reflSeenM; if (c.refl && typeof c.refl === 'object') { delete c.refl.players; if (c.refl.m && typeof c.refl.m === 'object') delete c.refl.m.st; } c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };   // Anwesenheit (t.att) und Spieler-Notizen der Reflexion (t.refl.players) bleiben auf dem Gerät
 const saveBlob = (name, blob) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
 const download = (name, obj) => saveBlob(name, new Blob([JSON.stringify(obj)], { type: 'application/json' }));
 const appUrl = () => location.origin + location.pathname;
@@ -1471,7 +1613,7 @@ function doImport() {
   for (const t of d.t) {
     if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta);
     const i = DB.trainings.findIndex(x => x.id === t.id);
-    if (i >= 0) { const o = DB.trainings[i]; if (!t.att && o.att) t.att = o.att; if (!t.jsType && o.jsType) t.jsType = o.jsType; if (o.refl && !t.refl) t.refl = o.refl; else if (o.refl && o.refl.players && t.refl && typeof t.refl === 'object' && !t.refl.players) t.refl.players = o.refl.players; if (o.reflSeen && !t.reflSeen) t.reflSeen = o.reflSeen; DB.trainings[i] = t; } else DB.trainings.push(t);   // eigene Anwesenheit bleibt erhalten
+    if (i >= 0) { const o = DB.trainings[i]; if (!t.att && o.att) t.att = o.att; if (!t.jsType && o.jsType) t.jsType = o.jsType; if (o.refl && !t.refl) t.refl = o.refl; else if (o.refl && o.refl.players && t.refl && typeof t.refl === 'object' && !t.refl.players) t.refl.players = o.refl.players; if (o.refl && o.refl.m && o.refl.m.st && t.refl && t.refl.m && typeof t.refl.m === 'object' && !t.refl.m.st) t.refl.m.st = o.refl.m.st; if (o.reflSeen && !t.reflSeen) t.reflSeen = o.reflSeen; if (o.reflSeenM && !t.reflSeenM) t.reflSeenM = o.reflSeenM; DB.trainings[i] = t; } else DB.trainings.push(t);   // eigene Anwesenheit bleibt erhalten
   }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
@@ -1657,7 +1799,7 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen']);
+const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
@@ -1758,7 +1900,8 @@ function spImport(sp) {   // Datensicherung: Zugänge zu Mannschaftsräumen wied
 const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Stufe und – passend zum Wochentag des Datums – Startzeit, Dauer und Ort werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
   <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
   <button class="card choice" data-a="flow" data-k="season"><b>📅 Über die Saisonplanung</b><span class="small muted">Du siehst den Wochenplan und legst Trainings direkt auf einen Tag.</span></button>
-  <button class="card choice" data-a="flow" data-k="blank"><b>✏️ Leeres Training</b><span class="small muted">Ohne Vorlage: du fügst Blöcke selbst hinzu, auch aus der Bibliothek.</span></button></div>`;
+  <button class="card choice" data-a="flow" data-k="blank"><b>✏️ Leeres Training</b><span class="small muted">Ohne Vorlage: du fügst Blöcke selbst hinzu, auch aus der Bibliothek.</span></button>
+  <button class="card choice" data-a="flow" data-k="match"><b>🏆 Wettkampf</b><span class="small muted">Spiel oder Turnier mit Gegner und Ziel – für die Anwesenheit (AWK) und die Reflexion, ohne Übungen.</span></button></div>`;
 const NAV = [['/', 'Trainings', '📋'], ['/teams', 'Teams', '👥'], ['/lib', 'Bibliothek', '📚'], ['/rtp', 'RTP', '🗺️'], ['/more', 'Mehr', '⋯']];
 function render() {
   const h = location.hash.slice(1) || '/';
@@ -1787,6 +1930,7 @@ function render() {
     const t = getT(p[1]); tab = '/';
     if (t) { const tmx = teamOf(t), spx = SYNC_ON && tmx && spOf(tmx.id); if (!(spx && spx.role === 'r')) swEnsure(t); }   // Swiss-Way-Beschreibung erzeugen (nicht bei «Nur lesen»)
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
+    else if (isMatch(t) && !['att', 'end'].includes(p[2])) html = viewMatch(t);
     else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else if (p[2] === 'end') html = viewEnd(t, +p[3] === 2 ? 2 : 1); else if (p[2] === 'newex') html = viewNewEx(t); else html = viewEdit(t);
   } else if (p[0] === 'lib') {
     if (p[1] === 'new') html = viewLibForm(); else if (p[1] === 'edit') html = viewLibForm(p[2]);
@@ -1835,7 +1979,7 @@ const A = {
   calDay(el) { const c = S.cal, d = pd(el.dataset.d); c.day = el.dataset.d; c.y = d.getFullYear(); c.m = d.getMonth(); render(); },
   calTeam(el) { go(kid('/cal')); },   // «Kalender» auf der Mannschaftsseite: Teams › Mannschaft › Kalender
   newT(el) { go(kid('/new', { tm: el.dataset.team, d: el.dataset.date })); },
-  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.team = tm.id; save(); } go(mk(k === 'rtp' ? '/rtp' : '/season', route().chain, { fl: k, tm: S.seed.team, d: S.seed.date })); },
+  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); if (k === 'match') return A.matchNew({ dataset: { team: S.seed.team, date: S.seed.date } }); const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.team = tm.id; save(); } go(mk(k === 'rtp' ? '/rtp' : '/season', route().chain, { fl: k, tm: S.seed.team, d: S.seed.date })); },
   flowCancel() { const r = route(); S.flow = null; S.seed = { team: '', date: '' }; go(r.p[0] === 'new' && !r.chain.length ? '/' : parentOf(r)); },
   mColor(el) { S.mf.color = el.dataset.k; document.querySelectorAll('[data-a=mColor]').forEach(b => b.classList.toggle('sel', b === el)); },
   mAddS() {
@@ -1875,7 +2019,7 @@ const A = {
   dupI(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id); t.items.splice(i + 1, 0, { ...JSON.parse(JSON.stringify(t.items[i])), id: uid() }); touch(t); render(); },
   addG() { const t = curT(); S.pick = t.id; S.lib.kind = 'goalie'; S.lib.stage = t.stage; S.lib.sp = ''; go(kid('/lib', { pk: 1 })); },
   pick() { const t = curT(); S.pick = t.id; S.lib.stage = t.stage; if (S.lib.kind === 'goalie') S.lib.kind = ''; go(kid('/lib', { pk: 1 })); },
-  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; delete c.refl; delete c.reflSeen; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(sib(`/t/${c.id}`)); },
+  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; delete c.refl; delete c.reflSeen; delete c.reflSeenM; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(sib(`/t/${c.id}`)); },
   delT() { const t = curT(), r = route(); removeTrainings([t]); goR(parentOf(r)); },
   toastAct() { const fn = toast.fn; toast.fn = null; $('#toast').className = ''; fn && fn(); },
   teamF(el) { S.team = el.dataset.k; render.seasonScrolled = false; render(); },
@@ -2046,8 +2190,32 @@ const A = {
     const x = r.players[id] = r.players[id] && typeof r.players[id] === 'object' ? r.players[id] : {}; if (x.k === k) delete x.k; else x.k = k; pkMark(el, x.k === k);
     const w = el.closest('.rfp').querySelector('.rfwhy'); if (w) w.hidden = !x.k; if (!x.k && !String(x.note || '').trim()) delete r.players[id]; touch(t);
   },
-  reflSave() { const t = curT(), r = reflEdit(t); r.at = Date.now(); touch(t); S.rfPl = false; done('Reflexion gespeichert. Sie erscheint beim nächsten Training und bei den Übungen wieder.', kid('/t/' + t.id)); },
+  reflSave() {
+    const t = curT(), r = reflEdit(t), mt = isMatch(t); r.at = Date.now();
+    if (mt) { const m = reflEditM(t); m.take = (Array.isArray(m.take) ? m.take : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 3); r.change = m.take.join('; '); }   // «Ändern» spiegelt die Punkte (Rückblick)
+    touch(t); S.rfPl = false; done(mt ? 'Wettkampf-Reflexion gespeichert. Die Punkte erscheinen beim nächsten Training der Mannschaft.' : 'Reflexion gespeichert. Sie erscheint beim nächsten Training und bei den Übungen wieder.', kid('/t/' + t.id));
+  },
   reflSeen() { const t = curT(); if (!t) return; t.reflSeen = true; touch(t); render(); },
+  reflSeenM() { const t = curT(); if (!t) return; t.reflSeenM = true; touch(t); render(); },
+  matchNew(el) {   // neuer Wettkampf: von der Mannschaftsseite (data-team) oder aus «Neues Training»
+    const tm = teamById(el.dataset.team || ''), r = route(), t = newMatch(tm, el.dataset.date || ''); S.seed = { team: '', date: '' };
+    done('Wettkampf angelegt – ergänze Gegner und Ziel.', r.p[0] === 'new' ? mk('/t/' + t.id, r.chain) : kid('/t/' + t.id));
+  },
+  matchAddOpp() { const t = curT(); if (!t || !isMatch(t)) return; const m = matchEdit(t); m.opp.push(''); t.title = matchTitle(t); touch(t); render(); },
+  matchDelOpp(el) { const t = curT(); if (!t || !isMatch(t)) return; const m = matchEdit(t); m.opp.splice(+el.dataset.i, 1); if (!m.opp.length) m.opp = ['']; t.title = matchTitle(t); touch(t); render(); },
+  matchEnd() { const t = curT(); if (!t) return; go(kid(`/t/${t.id}/end/${playersOf(teamOf(t)).length ? 1 : 2}`)); scrollTo(0, 0); },   // Wettkampf abschliessen: Anwesenheit, dann Reflexion
+  mgAdd() { const t = curT(), m = reflEditM(t); if (!Array.isArray(m.games) || !m.games.length) m.games = matchOf(t).opp.map(o => ({ opp: o.trim() })); m.games.push({ opp: '' }); touch(t); render(); },
+  mgDel(el) { const t = curT(), m = reflEditM(t); if (!Array.isArray(m.games) || !m.games.length) m.games = matchOf(t).opp.map(o => ({ opp: o.trim() })); if (m.games.length > 1) m.games.splice(+el.dataset.i, 1); touch(t); render(); },
+  reflMScale(el) {
+    const t = curT(), m = reflEditM(t), k = el.dataset.k, v = +el.dataset.v, s = RF_MSC.find(x => x.k === k); if (!s) return;
+    m.sc = m.sc && typeof m.sc === 'object' ? m.sc : {}; if (+m.sc[k] === v) delete m.sc[k]; else m.sc[k] = v; pkMark(el, +m.sc[k] === v);
+    const e = $('#rfv-' + k); if (e) e.textContent = +m.sc[k] >= 1 ? '· ' + s.txt[+m.sc[k] - 1] : ''; touch(t); reflUp(t);
+  },
+  reflMPh(el) {
+    const t = curT(), m = reflEditM(t), k = el.dataset.k, v = +el.dataset.v; if (!RF_PH.some(x => x[0] === k)) return;
+    m.ph = m.ph && typeof m.ph === 'object' ? m.ph : {}; const x = m.ph[k] = m.ph[k] && typeof m.ph[k] === 'object' ? m.ph[k] : {}; if (x.v === v) delete x.v; else x.v = v; pkMark(el, x.v === v);
+    const w = el.closest('.rfx').querySelector('.rfwhy'); if (w) w.hidden = x.v === undefined; if (x.v === undefined && !String(x.w || '').trim()) delete m.ph[k]; touch(t); reflUp(t);
+  },
 };
 document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('rfpl')) S.rfPl = ev.target.open; else if (c.contains('tsec')) ev.target.open ? S.tsec.add(ev.target.dataset.k) : S.tsec.delete(ev.target.dataset.k); else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
 document.addEventListener('click', ev => {
@@ -2064,6 +2232,12 @@ function onInput(ev) {
   const rer = el.dataset.r && ev.type === 'change';
   if (k === 't' && a === 'teamId') { const t = curT(), tm = teamById(v); if (v === '__txt') return; const old = teamOf(t); if (tm) applyTeam(t, tm); else setTeam(t, null); if (old && (!tm || old.id !== tm.id)) spDel('t', old.id, t.id); touch(t); }
   else if (k === 't') { const t = curT(); t[a] = v; touch(t); if (a === 'min') $('#sum').innerHTML = sumHtml(t); }
+  else if (k === 'mt' || k === 'mo') {   // Wettkampf: Art, Ziel, Gegner
+    const t = curT(); if (!t || !isMatch(t)) return; const m = matchEdit(t);
+    if (k === 'mt') { if (a === 'art' && MATCH_ART.includes(v)) m.art = v; else if (a === 'ziel') m.ziel = String(v).slice(0, 500); }
+    else { const i = +a; if (!(i >= 0 && i < 30)) return; while (m.opp.length <= i) m.opp.push(''); m.opp[i] = String(v).slice(0, 80); }
+    t.title = matchTitle(t); touch(t); const s = $('.ttl .sub'); if (s) s.textContent = t.title;
+  }
   else if (k === 'i' || k === 'g') {
     const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
@@ -2080,6 +2254,7 @@ function onInput(ev) {
   else if (k === 'rf') {   // Reflexion: Freitexte, Warum-Feld je Übung, Notiz je Spieler
     const t = curT(); if (!t) return; const r = reflEdit(t), val = String(v).slice(0, 2000);
     if (a === 'good' || a === 'change') r[a] = val;
+    else if (isMatch(t) && rfMatch(t, a, b, v)) { /* Wettkampf-Reflexion */ }
     else if ((a === 'why' || a === 'pn') && spSafe(b)) { const f = a === 'why' ? 'items' : 'players'; r[f] = r[f] && typeof r[f] === 'object' ? r[f] : {}; const x = r[f][b] = r[f][b] && typeof r[f][b] === 'object' ? r[f][b] : {}; x[a === 'why' ? 'why' : 'note'] = val; }
     touch(t); reflUp(t);
   }
