@@ -5,3 +5,6 @@
 
 # lokaler Zwischenstand von tools/build-utp.js
 tools/.utp-cache.json
+
+# lokaler Testserver für den Abgleich (tools/sync-mock.js)
+tools/.sync-mock.json
