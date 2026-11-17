@@ -309,9 +309,48 @@ const go = h => { if (location.hash === '#' + h) render(); else location.hash = 
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
 const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
 const stageOpts = (sel, all) => (all ? opt('', 'Alle Stufen', sel) : '') + R.stages.map(s => opt(s.id, s.name, sel)).join('');
-const BACKL = h => h === '/' ? 'Trainings' : h === '/lib' ? 'Bibliothek' : h === '/rtp' ? 'RTP' : h === '/season' ? 'Saison' : h === '/teams' ? 'Teams' : /^\/team\//.test(h) ? 'Mannschaft' : h === '/more' ? 'Mehr' : h === '/new' ? 'Neu' : /^\/t\//.test(h) ? 'Training' : /^\/rtp\//.test(h) ? 'Block' : /^\/lib\/x/.test(h) ? 'Übung' : 'Zurück';
-// Kopfzeile: Zurück mit Zielname, Titel, optional Untertitel (HTML, selbst escapen), rechts Aktionen, optional Kontextleiste (Ablauf/Auswahl)
-const head = (title, back, right = '', sub = '', bar = '') => `<header class="top"><div class="trow">${back ? `<a class="back" href="#${back}" aria-label="Zurück zu ${esc(BACKL(back))}">‹<span>${esc(BACKL(back))}</span></a>` : ''}<div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
+// Brotkrumen: der Pfad der aktuellen Seite, zentral aus der Route (und dem Zustand S) abgeleitet. Jeder Eintrag: [Name, Adresse (ohne #) oder null, optional Stufe]; der letzte ist die aktuelle Seite.
+// Die vorletzte Ebene ist der Weg zurück (früher der «‹ Ziel»-Link in der Kopfzeile). head() setzt die Leiste automatisch; für eine neue Ansicht braucht es hier nur einen Zweig.
+const TR = ['Trainings', '/'];
+function trailOf() {
+  const p = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent), f = S.flow;
+  const tPath = t => { const tm = teamOf(t); return [TR, ...(tm ? [[tm.name, '/team/' + tm.id]] : []), [t.date ? 'Training ' + dm(pd(t.date)) : (t.title || 'Training'), '/t/' + t.id]]; };
+  if (p[0] === 'cal') return [TR, ['Kalender']];
+  if (p[0] === 'season') return f && f.k === 'season' ? [TR, ['Neues Training', '/new'], ['Tag wählen']] : [TR, ['Saison']];
+  if (p[0] === 'new') return [TR, ['Neues Training']];
+  if (p[0] === 'plan') return [TR, ['Ganzen Block planen']];
+  if (p[0] === 'teams') return [['Teams']];
+  if (p[0] === 'team') {
+    if (p[1] === 'new') return [['Teams', '/teams'], ['Neue Mannschaft']];
+    const tm = teamById(p[1]), b = [['Teams', '/teams'], [tm ? tm.name : 'Mannschaft', '/team/' + p[1]]];
+    return p[2] === 'edit' ? [...b, ['Bearbeiten']] : b;
+  }
+  if (p[0] === 't') {
+    const t = getT(p[1]); if (!t) return [TR, ['Nicht gefunden']];
+    const x = { run: 'Hallenmodus', view: 'Übersicht', att: 'Anwesenheit' }[p[2]];
+    return x ? [...tPath(t), [x]] : tPath(t);
+  }
+  if (p[0] === 'lib') {
+    const pt = S.pick && getT(S.pick), e = p[1] === 'x' ? libGet(p.slice(2).join('/')) : null;
+    if (p[1] === 'new') return [['Bibliothek', '/lib'], ['Eigene Übung erstellen']];
+    if (p[1] === 'edit') { const c = DB.custom.find(x => x.id === p[2]); return [['Bibliothek', '/lib'], ...(c ? [[c.name || 'Eigene Übung', '/lib/x/' + encodeURIComponent('c:' + c.id)]] : []), ['Bearbeiten']]; }
+    if (p[1] === 'x') return pt ? [...tPath(pt), ['Übung hinzufügen', '/lib'], [e ? e.name : 'Übung']] : [['Bibliothek', '/lib'], [e ? e.name : 'Übung']];
+    return pt ? [...tPath(pt), ['Übung hinzufügen']] : [['Bibliothek']];
+  }
+  if (p[0] === 'rtp') {
+    const st = stageById(p[1]), b = st && st.blocks.find(x => x.nr === +p[2]);
+    if (f && f.k === 'rtp') return [TR, ['Neues Training', '/new'], ['Schritt ' + (b ? 2 : 1) + ' von 2']];
+    return b ? [['RTP', '/rtp'], [st.name, '/rtp', st.id], ['Block ' + b.nr]] : [['RTP']];
+  }
+  if (p[0] === 'more') return [['Mehr']];
+  return [TR, ['Liste']];
+}
+function crumbBar(run) {   // run: Hallenmodus, nur zur Orientierung (ohne Links, damit nichts versehentlich abbricht)
+  const tr = trailOf(), last = tr.length - 1;
+  return `<nav class="crumbs${run ? ' run' : ''}" aria-label="Brotkrumen">${tr.map(([l, h, st], i) => (i ? '<i aria-hidden="true">›</i>' : '') + (i < last && h && !run ? `<a href="#${esc(h)}"${st ? ` data-a="crumbStage" data-k="${esc(st)}"` : ''}>${esc(l)}</a>` : `<span${i === last ? ' class="cur" aria-current="page"' : ''}>${esc(l)}</span>`)).join('')}</nav>`;
+}
+// Kopfzeile: Brotkrumen, Titel, optional Untertitel (HTML, selbst escapen), rechts Aktionen, optional Kontextleiste (Ablauf/Auswahl). Der 2. Parameter (früher Zurück-Ziel) wird nicht mehr gebraucht, die Brotkrumen führen zurück.
+const head = (title, back, right = '', sub = '', bar = '') => `<header class="top">${crumbBar()}<div class="trow"><div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
 // Kontextleiste: laufender Ablauf (Neues Training) oder Auswahlmodus (Übung für ein Training) – immer sichtbar und abbrechbar
 function ctxBar(step) {
   const f = S.flow, pt = S.pick && getT(S.pick);
@@ -377,7 +416,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}` + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}` + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -469,7 +508,7 @@ function viewRun(t) {
   if (!t.items.length) return head('Hallenmodus', `/t/${t.id}`) + '<p class="muted center">Dieses Training hat noch keine Blöcke.</p>';
   if (!S.run || S.run.id !== t.id) { S.run = { id: t.id, i: 0, on: false }; runSet(t, 0); const m = runLoad(t); if (m) { runSet(t, m.i); S.run.left = m.left; S.run.started = true; } }
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
-  return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
+  return `<div class="run" style="--c:${ty[1]}">${crumbBar(true)}<div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
     ${r.i === 0 && !r.started ? rtpSummary(t) + matCard(t) + attLink(t) : ''}
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
@@ -531,7 +570,7 @@ function viewLibItem(e) {
     ${lu ? '<p class="small muted">Deine Notizen werden beim Hinzufügen ins Training übernommen.</p></div>' : `<p class="small muted">Die offizielle Beschreibung mit Skizze/Video findest du im Unihockey-Trainingsplaner (UTP): Bibliothek → nach dem Namen suchen. Deine Notizen werden beim Hinzufügen ins Training übernommen.</p>
     <button class="btn" data-a="utp" data-n="${esc(e.name)}">Name kopieren &amp; UTP öffnen</button></div>`}
     ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
-  return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : 'Bibliothek', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
+  return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : '', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
     <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
     ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}</div>${body}
     <button class="btn pri block" data-a="addLib" data-k="${esc(e.key)}">${pt ? `Zu «${esc(pt.title)}» hinzufügen` : 'Zu einem Training hinzufügen'}</button>`;
@@ -540,7 +579,7 @@ function viewLibForm(id) {
   const c = id ? DB.custom.find(x => x.id === id) : null;
   S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, mat: '', desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
   const f = S.form;
-  return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', 'Bibliothek · eigene Übungen', ctxBar()) + `<div class="card">
+  return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', c ? esc(c.name) : 'Wird in der Bibliothek gespeichert', ctxBar()) + `<div class="card">
     <label>Name<input data-b="c:name" value="${esc(f.name)}"></label>
     <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
     <div class="chips">${R.stages.map(s => `<button class="chip ${f.stages.includes(s.id) ? 'sel' : ''}" data-a="cStage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
@@ -557,7 +596,7 @@ function viewLibForm(id) {
 function viewRtp() {
   const st = stageById(DB.stage) || R.stages[0], gc = G.curriculum[st.id];
   const gbox = `<div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul><p class="small muted">${esc(G.note)}</p></div>`;
-  return head('Rahmentrainingsplan', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Stufe und Block wählen' : 'Stufe wählen, dann Block ansehen', ctxBar('block')) + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
+  return head('Rahmentrainingsplan', null, '', S.flow ? 'Neues Training · Stufe und Block wählen' : 'Stufe wählen, dann Block ansehen', ctxBar('block')) + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
   <div class="card"><h2 class="nomargin">${esc(st.name)}${st.draft ? ' <span class="chip">Arbeitsstand</span>' : ''}</h2><p class="muted small">${esc(st.annahme)}</p>
     <details><summary>Hinweise zum RTP</summary><ul class="small">${R.hints.map(h => `<li>${esc(h)}</li>`).join('')}</ul>
       ${st.notes.map(n => `<b>${esc(n.title)}</b>${n.text.map(x => `<p class="small">${esc(x)}</p>`).join('')}`).join('')}
@@ -581,7 +620,7 @@ function viewBlock(st, b) {
   const ath = b.athletik ? `<h2>Athletik</h2><div class="card">${b.athletik.ziele.map(z => `<p class="small">${z.faktor ? `<b>${esc(z.faktor)}:</b> ` : '<b>Ziel:</b> '}${esc(z.text)}</p>`).join('')}</div>
     ${b.athletik.sessions.map(s => `<details class="card"><summary><b>${esc(s.faktor)}</b> <span class="muted small">Woche ${esc(s.woche)} · Training ${esc(s.training)}</span></summary>
       ${s.items.map(it => `<div class="slot"><b>${it.form ? `<a href="#/lib/x/${encodeURIComponent(norm(it.form))}">${esc(it.form)}</a>` : 'Übung'}</b><div class="small">${esc([it.whg, it.serien && it.serien + ' Serien', it.gewicht, it.rhythmus].filter(Boolean).join(' · '))}</div>${it.keypoints ? `<div class="small muted">${esc(it.keypoints)}</div>` : ''}</div>`).join('')}</details>`).join('')}` : '';
-  return head(`${st.id} · Block ${b.nr}`, '/rtp', '', S.flow ? 'Neues Training · Training wählen' : 'Rahmentrainingsplan · Block', ctxBar('train')) + `<p class="muted small center">${esc(b.monat || b.phase)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}</p>
+  return head(`${st.id} · Block ${b.nr}`, '/rtp', '', S.flow ? 'Neues Training · Training wählen' : st.name, ctxBar('train')) + `<p class="muted small center">${esc(b.monat || b.phase)}${b.weeks.length ? ` · Woche ${b.weeks[0].w}–${b.weeks[b.weeks.length - 1].w}` : ''}</p>
     ${S.flow ? trains : ''}${part(b.main, 'Hauptschwerpunkt')}${part(b.sec, 'Nebenschwerpunkt')}
     ${ev.length || b.regel.length ? `<div class="card">${ev.length ? `<b>Termine / Events</b><div class="chips">${ev.map(e => chip(e)).join('')}</div>` : ''}${b.regel.length ? `<p class="small"><b>Regel-Fokus:</b> ${esc(b.regel.join(', '))}</p>` : ''}</div>` : ''}
     ${S.flow ? '' : trains}${ath}`;
@@ -786,7 +825,7 @@ function viewTeam(id) {
   const tm = teamById(id); if (!tm) return head('Mannschaft', '/teams') + '<p class="muted center">Mannschaft nicht gefunden.</p>';
   const today = iso(new Date()), all = teamTrainings(tm).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '')), up = all.filter(t => !t.date || t.date >= today), past = all.filter(t => t.date && t.date < today).reverse();
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
-  return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
+  return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
   ${spCard(tm)}${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
@@ -1331,6 +1370,7 @@ function render() {
   if (!run && S.run) { S.run = null; runKeep(); wakeLock(false); }
   document.body.classList.toggle('running', run);
   $('#app').innerHTML = html; roApply();
+  const cb = $('.crumbs'); if (cb) cb.scrollLeft = cb.scrollWidth;   // Brotkrumen: bei Platzmangel die aktuelle Seite (rechts) sichtbar machen
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
   if (render.last !== h.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
   render.last = h.split('/').slice(0, 3).join('/');
@@ -1342,6 +1382,7 @@ addEventListener('hashchange', render);
 const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
 const A = {
   close: closeModal,
+  crumbStage(el) { DB.stage = el.dataset.k; save(); },   // Brotkrumen «RTP › D-Junioren»: Stufe merken, der Link öffnet die Stufenübersicht
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
   calDay(el) { const c = S.cal, d = pd(el.dataset.d); c.day = el.dataset.d; c.y = d.getFullYear(); c.m = d.getMonth(); render(); },

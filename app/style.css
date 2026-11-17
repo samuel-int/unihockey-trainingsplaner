@@ -61,6 +61,14 @@ span.chip { min-height: 24px; cursor: default; } .chip[style] { border-color: va
 .qr { max-width: 280px; margin: 12px auto; background: #fff; padding: 6px; border-radius: 10px; } .qr svg { display: block; width: 100%; height: auto; }
 #toast { position: fixed; left: 50%; bottom: calc(var(--nav) + 20px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); background: #14202e; color: #fff; padding: 9px 16px; border-radius: 20px; font-size: .9rem; opacity: 0; pointer-events: none; transition: .2s; z-index: 30; white-space: nowrap; }
 #toast.on { opacity: 1; transform: translateX(-50%); }
+/* Brotkrumen (Kopfzeile): alle Ebenen ausser der letzten sind Links; bei Platzmangel scrollt nur die Leiste */
+.crumbs { display: flex; align-items: center; gap: 5px; overflow-x: auto; white-space: nowrap; font-size: .8rem; line-height: 1.2; margin: 0 -2px; scrollbar-width: none; overscroll-behavior-x: contain; }
+.crumbs::-webkit-scrollbar { display: none; }
+.crumbs > * { flex: none; max-width: 13em; overflow: hidden; text-overflow: ellipsis; padding: 7px 2px; }
+.crumbs i { font-style: normal; color: var(--muted); padding-left: 0; padding-right: 0; }
+.crumbs a { color: var(--pri); } .crumbs .cur { color: var(--muted); }
+.crumbs.run { padding-top: env(safe-area-inset-top); font-size: .72rem; margin: 0; } .crumbs.run > * { padding-top: 4px; padding-bottom: 0; color: var(--muted); }
+.run .crumbs + .runtop { padding-top: 2px; }
 /* Hallenmodus */
 body.running #nav { display: none; } body.running #app { padding-bottom: 110px; }
 .runtop { padding: calc(10px + env(safe-area-inset-top)) 0 8px; }
@@ -70,14 +78,14 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .run .card p, .run .gbox p { font-size: 1.05rem; }
 .runnav { position: fixed; left: 0; right: 0; bottom: 0; max-width: 720px; margin: 0 auto; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); }
 @media print {
-  #nav, .top .btn, .back, #toast, .utp, .ctx { display: none !important; } body { background: #fff; color: #000; } .top { position: static; }
+  #nav, .top .btn, .back, .crumbs, #toast, .utp, .ctx { display: none !important; } body { background: #fff; color: #000; } .top { position: static; }
   .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; } #app { max-width: none; padding: 0; }
 }
 /* Blöcke, Auswahl, Rückgängig */
 .top .btn { min-height: 38px; padding: 6px 12px; }
 .ghead { margin-top: 18px; } .ghead h2 { flex: 1; margin: 0; min-width: 0; }
 .tcard.past { opacity: .6; } .tcard.picked { outline: 2px solid var(--pri); } .tcard[data-a] { cursor: pointer; }
-.selbar { position: sticky; top: 58px; z-index: 4; } .selbar b { flex: 1; }
+.selbar { position: sticky; top: 92px; z-index: 4; } .selbar b { flex: 1; }
 #toast.act { pointer-events: auto; } #toast button { margin-left: 10px; background: none; border: 0; color: #7cc0ff; font: inherit; font-weight: 700; cursor: pointer; padding: 4px; }
 
 /* RTP-Zusammenfassung */
