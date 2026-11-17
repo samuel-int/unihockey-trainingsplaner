@@ -13,6 +13,18 @@ const KEY = 'unihockey-planer.v1';
 const EMPTY = () => ({ v: 1, trainings: [], custom: [], notes: {}, season: {}, stage: 'D', teams: [], seasons: {} });
 let DB = EMPTY();
 try { DB = Object.assign(EMPTY(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* leer starten */ }
+// Abgleich «Mannschaftsraum»: Konfiguration aus sync-config.js. Entwickler-Schalter: nur auf localhost/127.0.0.1 mit ?sync=dev (gilt für die Sitzung) wird der lokale Test-Server benutzt.
+const SYNCCFG = (() => {
+  let c = window.SYNC || {};
+  try {
+    if (['localhost', '127.0.0.1'].includes(location.hostname)) {
+      if (/[?&]sync=dev(&|$)/.test(location.search)) sessionStorage.setItem('unihockey-sync-dev', '1');
+      if (sessionStorage.getItem('unihockey-sync-dev') === '1') c = { url: 'http://localhost:5180', key: 'dev-key' };
+    }
+  } catch (e) { /* ohne sessionStorage: Konfiguration aus sync-config.js */ }
+  return { url: String(c.url || '').trim().replace(/\/+$/, ''), key: String(c.key || '').trim() };
+})();
+const SYNC_ON = !!(SYNCCFG.url && SYNCCFG.key && window.crypto && crypto.subtle);
 let saveT;
 const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); };
