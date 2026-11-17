@@ -98,8 +98,12 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .chip.swatch { width: 40px; min-height: 40px; padding: 0; border-radius: 50%; border: 3px solid transparent; } .chip.swatch.sel { border-color: var(--text); background: var(--c); }
 .tcard .dot, .chip .dot { margin-right: 5px; }
 
+/* Saison: Trainings der Woche */
+.wkt { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 0; margin-top: 4px; border-top: 1px solid var(--line); color: var(--text); } .wkt.past { opacity: .6; }
+.wkt .wd { flex: none; width: 5.4em; font-weight: 600; font-size: .9rem; } .wkt .wt { flex: 1; min-width: 0; display: flex; flex-direction: column; } .wkt .wt b { font-weight: 600; } .wkt .wt .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week .chips { margin: 8px 0 0; }
 /* Kalender */
-.calnav { margin: 4px 0 8px; } .calnav .btn { min-width: 48px; font-size: 1.3rem; } .calnav b { font-size: 1.05rem; }
+.calnav { margin: 4px 0 8px; } .calnav .btn { min-width: 48px; font-size: 1.3rem; } .calnav .btn.sm { font-size: .86rem; min-width: 0; } .calnav b { font-size: 1.05rem; }
 .cal-h, .cal-g { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; } .cal-h span { text-align: center; font-size: .75rem; color: var(--muted); padding: 2px 0 4px; }
 .cal-d { min-height: 52px; padding: 4px 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--text); font: inherit; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; cursor: pointer; }
 .cal-d .n { font-size: .9rem; font-weight: 600; line-height: 1.2; } .cal-d.oth { opacity: .45; } .cal-d.today .n { background: var(--pri); color: var(--pri-t); border-radius: 50%; min-width: 24px; text-align: center; } .cal-d.sel { outline: 2px solid var(--pri); outline-offset: -1px; }

@@ -295,6 +295,13 @@ function toast(msg, act, fn) { const el = $('#toast'); el.innerHTML = esc(msg) +
 const teamDot = tm => `<span class="dot" style="background:${esc(tm.color)}"></span>`;
 const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && (tm || t.team) ? `${tm ? teamDot(tm) : ''}<b>${esc(tm ? tm.name : t.team)}</b> · ` : ''}${[t.date ? fmtDate(t.date) : 'ohne Datum', t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ')}`; };
 const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/cal', 'Kalender', 'cal'], ['/season', 'Saison', 'season']].map(([h, l, k]) => `<a href="#${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
+// Trainings: drei Ansichten derselben Trainings (Liste | Kalender | Saison). Titel, «+ Neu» und der Mannschaftsfilter (S.team, gilt auch für die Saison-Konfiguration) sind überall gleich.
+const tFilter = () => { if (S.team && !teamById(S.team)) S.team = ''; return S.team || ''; };
+const teamChips = () => { const f = tFilter(); return DB.teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Mannschaften</button>${DB.teams.map(x => `<button class="chip ${f === x.id ? 'sel' : ''}" data-a="teamF" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''; };
+function trTop(cur, extra = '') {   // Kopf der drei Ansichten; im Neu-Ablauf «Über die Saisonplanung» ohne Umschalter und «+ Neu», dafür mit Ablaufleiste
+  const fl = cur === 'season' && S.flow && S.flow.k === 'season';
+  return (fl ? head('Trainings', null, '', '', ctxBar()) : head('Trainings', null, `<button class="btn pri" data-a="newT" data-team="${esc(tFilter())}">+ Neu</button>`) + seg(cur)) + extra + teamChips();
+}
 const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
 function removeTrainings(list) {
@@ -366,7 +373,7 @@ function done(text, h, undo) { S.done = { text, h, undo }; go(h); }
 
 // ---------- Ansicht: Trainings ----------
 function viewHome() {
-  const today = iso(new Date()), teams = DB.teams, f = teamById(S.team) ? S.team : '';
+  const today = iso(new Date()), f = tFilter();
   const ts = DB.trainings.filter(t => !f || (teamOf(t) || {}).id === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
   S.visible = ts.map(t => t.id);
   const inner = t => `<div class="row"><b>${S.sel ? (S.sel.has(t.id) ? '☑ ' : '☐ ') : ''}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div>
@@ -375,10 +382,9 @@ function viewHome() {
   const card = t => { const cls = `card tcard ${t.date && t.date < today ? 'past' : ''} ${S.sel && S.sel.has(t.id) ? 'picked' : ''}`; return S.sel ? `<div class="${cls}" data-a="selT" data-id="${t.id}">${inner(t)}</div>` : `<a class="${cls}" href="#/t/${t.id}">${inner(t)}</a>`; };
   const groups = new Map(); ts.forEach(t => { const k = grpKey(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
   const gtitle = g => { const t = g[0]; return [t.team, t.rtp ? `${t.rtp.stage} · Block ${t.rtp.block}${t.sp ? ' · ' + t.sp : ''}` : 'Einzelne Trainings'].filter(Boolean).join(' · '); };
-  return head('Trainings', null, (DB.trainings.length ? `<button class="btn" data-a="selMode">${S.sel ? 'Fertig' : 'Auswählen'}</button>` : '') + `<button class="btn pri" data-a="newT" data-team="${esc(f)}">+ Neu</button>`, '', '') + seg('list') + doneBar('/') + (DB.trainings.length ? `
-    ${teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Mannschaften</button>${teams.map(x => `<button class="chip ${f === x.id ? 'sel' : ''}" data-a="teamF" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
-    ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button></div>` : ''}
-    ${[...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('')}` : `
+  return trTop('list', doneBar('/')) + (DB.trainings.length ? `
+    ${S.sel ? `<div class="card selbar row"><b>${S.sel.size} ausgewählt</b><button class="btn sm" data-a="selAll">Alle</button><button class="btn sm danger" data-a="delSel" ${S.sel.size ? '' : 'disabled'}>Löschen</button><button class="btn sm" data-a="selMode">Fertig</button></div>` : `<div class="row"><span class="small muted grow">${ts.length} Training${ts.length === 1 ? '' : 's'}</span><button class="btn sm" data-a="selMode">Auswählen</button></div>`}
+    ${ts.length ? [...groups].map(([k, g]) => `<div class="row ghead"><h2>${esc(gtitle(g))} <span class="muted small">(${g.length})</span></h2><button class="btn sm" data-a="grp" data-k="${esc(k)}" aria-label="Block-Aktionen">⋯ Block</button></div>${g.map(card).join('')}`).join('') : '<p class="muted center">Für diese Mannschaft gibt es noch keine Trainings.</p>'}` : `
     <div class="card empty"><h2>Willkommen 👋</h2><p>Plane Trainings nach den Rahmentrainingsplänen (RTP) von swiss unihockey – mit eigener Goalie-Spur, Hallenmodus und Saisonplanung. Alles bleibt auf deinem Gerät, ohne Login.</p>
     <p><button class="btn pri" data-a="newT" data-team="">Erstes Training erstellen</button> <a class="btn" href="#/teams">Mannschaft anlegen</a></p><p class="small muted">Du wählst, ob du mit dem RTP, der Saisonplanung oder einem leeren Training startest.</p></div>`);
 }
@@ -627,9 +633,8 @@ function viewBlock(st, b) {
 }
 
 // ---------- Ansicht: Saison ----------
-function seasonCfg() {
-  if (S.sTeam === undefined) S.sTeam = (teamByName(DB.season.team) || {}).id || '';
-  const tm = teamById(S.sTeam); if (!tm) S.sTeam = '';
+function seasonCfg() {   // Konfiguration der Mannschaft des gemeinsamen Filters S.team (leer: allgemeine Konfiguration)
+  const tm = teamById(S.team); if (!tm) S.team = '';
   return seasonCfgFor(tm);
 }
 // Saison: beginnt am 1. Mai. Saisonjahr = Jahr dieses 1. Mai; Januar bis April gehören zur Saison des Vorjahres (2026/27 läuft vom 1.5.2026 bis 30.4.2027).
@@ -655,7 +660,7 @@ function seasonCfgFor(tm) {
 }
 // Einheiten, an denen die Saison plant: die der Mannschaft, sonst die Tage/Startzeit der allgemeinen Konfiguration
 const planSessions = (s, tm) => tm ? teamSessions(tm, true) : [...s.days].sort((a, b) => wdOrd(a) - wdOrd(b)).map(wd => ({ id: 'd' + wd, wd, time: s.time || '', min: 0, ort: '' }));
-function seasonWeeks(s = seasonCfg(), tm = teamById(S.sTeam)) {
+function seasonWeeks(s = seasonCfg(), tm = teamById(S.team)) {
   const st = stageById(s.stage), out = [], days = planSessions(s, tm);
   const flat = st.slots ? st.blocks.flatMap(b => b.weeks.map(w => ({ b, w }))) : null;
   let mon = monday(pd(s.start)), k = 0, cnt = {}, lastB = null;
@@ -673,30 +678,52 @@ function seasonWeeks(s = seasonCfg(), tm = teamById(S.sTeam)) {
   }
   return out;
 }
-// Chips einer Woche: je Einheit entweder das schon geplante Training oder «+» zum Anlegen (mehrere Einheiten am selben Tag werden getrennt geführt)
-function dayChips(r, byDate, st) {
+// Saison-Ansicht: dieselben Trainings wie Liste und Kalender, nach Wochen geordnet. Freie Einheiten erscheinen als «+»-Chips (mehrere Einheiten am selben Tag werden getrennt geführt).
+function missChips(r, byDate, st) {
   const dates = [...new Set(r.days.map(d => d.date))];
   return dates.map(date => {
     const ds = r.days.filter(d => d.date === date), m = matchDay(byDate[date] || [], ds.map(d => d.sess));
-    return ds.map((d, i) => { const lbl = `${WD[d.wd]} ${dm(pd(date))}${d.sess.time ? ' · ' + d.sess.time : ''}`, t = m.hit[i];
-      return t ? `<a class="chip sel" href="#/t/${t.id}">${lbl} ✓</a>` : `<button class="chip" data-a="sNew" data-s="${st.id}" data-b2="${r.b.nr}" data-w="${r.w ? r.w.w : 0}" data-i="${d.idx}" data-d="${date}" data-x="${esc(d.sess.id)}">+ ${lbl}</button>`; }).join('') + m.extra.map(t => `<a class="chip sel" href="#/t/${t.id}">${WD[pd(date).getDay()]} ${dm(pd(date))} ✓</a>`).join('');
+    return ds.map((d, i) => m.hit[i] ? '' : `<button class="chip" data-a="sNew" data-s="${st.id}" data-b2="${r.b.nr}" data-w="${r.w ? r.w.w : 0}" data-i="${d.idx}" data-d="${date}" data-x="${esc(d.sess.id)}">+ ${WD[d.wd]} ${dm(pd(date))}${d.sess.time ? ' · ' + d.sess.time : ''}</button>`).join('');
   }).join('');
 }
+const wkSort = (a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '');
+function wkLine(t, showTeam) {   // ein Training in der Wochenkarte
+  const tm = showTeam && teamOf(t);
+  return `<a class="wkt ${t.date && t.date < iso(new Date()) ? 'past' : ''}" href="#/t/${t.id}"><span class="wd">${t.date ? WD[pd(t.date).getDay()] + ' ' + dm(pd(t.date)) : 'ohne Datum'}</span><span class="wt"><b>${tm ? teamDot(tm) : ''}${esc(t.title || 'Ohne Titel')}</b><span class="small muted">${esc([tm && tm.name, t.start && `${t.start}–${endTime(t)}`, t.ort].filter(Boolean).join(' · ') || 'ohne Uhrzeit')}</span></span><span class="muted">${total(t)}′</span></a>`;
+}
 function viewSeason() {
-  const s = seasonCfg(), st = stageById(s.stage), today = iso(monday(new Date())), tm = teamById(S.sTeam);
-  const byDate = {}; DB.trainings.forEach(t => { if (t.date && (!tm || (teamOf(t) || {}).id === tm.id)) (byDate[t.date] = byDate[t.date] || []).push(t); });
-  return head('Saisonplanung', S.flow ? '/new' : null, '', S.flow ? 'Neues Training · Tag wählen' : tm ? `Wochenplan · ${esc(tm.name)}` : 'Wochenplan nach RTP', ctxBar()) + (S.flow ? '' : seg('season')) + `<details class="card" ${DB.season.set ? '' : 'open'}><summary><b>${esc(st.name)}</b> <span class="muted small">ab ${fmtDate(s.start)} · ${tm ? teamSessions(tm).map(x => WD[x.wd] + (x.time ? ' ' + x.time : '')).join(', ') || 'keine Trainingszeit' : s.days.map(d => WD[d]).join(', ')}</span></summary>
-    <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label><label>Saison<select data-b="s:year" data-r="1">${[...new Set([seasonYearNow() - 1, seasonYearNow(), seasonYearNow() + 1, seasonYear()])].sort().map(y => opt(String(y), seasonLabel(y) + (y === seasonYearNow() ? ' (aktuell)' : ''), String(seasonYear()))).join('')}</select></label></div>
-    <div class="grid2"><label>Saisonstart${(s.starts || {})[seasonYear()] ? ' (eigenes Datum)' : ' (Vorgabe 1. Mai)'}<input type="date" data-b="s:startOwn" data-r="1" value="${esc(s.start)}"></label><span></span></div>
-    <div class="grid2"><label>Mannschaft<select data-b="s:team" data-r="1">${opt('', 'Ohne Mannschaft', S.sTeam)}${DB.teams.map(x => opt(x.id, x.name, S.sTeam)).join('')}</select></label>${tm ? '' : `<label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label>`}</div>
+  const tf = tFilter(), tm = teamById(tf), flow = !!(S.flow && S.flow.k === 'season'), plan = !!tm || !DB.teams.length;   // geplant wird für eine Mannschaft (oder ohne Mannschaften mit der allgemeinen Konfiguration)
+  const y = seasonYear(), winFrom = seasonDefault(y), winTo = (y + 1) + '-04-30', today = iso(monday(new Date())), nowChip = chip('diese Woche');
+  const all = DB.trainings.filter(t => !tm || (teamOf(t) || {}).id === tm.id), inWin = t => t.date && t.date >= winFrom && t.date <= winTo;
+  const byDate = {}, byWeek = {};
+  all.forEach(t => { if (!t.date) return; (byDate[t.date] = byDate[t.date] || []).push(t); const k = iso(monday(pd(t.date))); (byWeek[k] = byWeek[k] || []).push(t); });
+  const lines = (k, showTeam) => (byWeek[k] || []).sort(wkSort).map(t => wkLine(t, showTeam)).join('');
+  const yearSel = `<label>Saison<select data-b="s:year" data-r="1">${[...new Set([seasonYearNow() - 1, seasonYearNow(), seasonYearNow() + 1, seasonYear()])].sort().map(v => opt(String(v), seasonLabel(v) + (v === seasonYearNow() ? ' (aktuell)' : ''), String(seasonYear()))).join('')}</select></label>`;
+  const restCard = rest => rest.length ? `<h2>Weitere Trainings (${rest.length})</h2><div class="card">${rest.sort(wkSort).map(t => wkLine(t, !tm)).join('')}</div><p class="small muted">Diese Trainings liegen ausserhalb der Wochen oben oder haben kein Datum.</p>` : '';
+  if (!plan) {   // mehrere Mannschaften, keine gewählt: alle Trainings der Saison nach Kalenderwochen, ohne RTP-Beschriftung (die hängt an der Stufe der Mannschaft)
+    const keys = [...new Set(all.filter(inWin).map(t => iso(monday(pd(t.date)))))].sort();
+    return trTop('season') + `<div class="card"><b>Saison ${seasonLabel(y)}</b> <span class="muted small">· ${all.filter(inWin).length} Trainings</span>${yearSel}<p class="small muted nomargin">Wähle oben eine Mannschaft, um den RTP-Wochenplan mit Ferienwochen zu sehen und zu planen.</p></div>
+    ${keys.map(k => `<div class="card week ${k === today ? 'now' : ''}" id="w${k}"><div class="row"><span><b>${dm(pd(k))}–${dm(addDays(pd(k), 6))}</b> ${k === today ? nowChip : ''}</span></div>${lines(k, true)}</div>`).join('') || '<p class="muted center">In dieser Saison gibt es noch keine Trainings.</p>'}
+    ${restCard(all.filter(t => !t.date))}`;
+  }
+  const s = seasonCfg(), st = stageById(s.stage), rows = seasonWeeks(s, tm), rowKeys = new Set(rows.map(r => r.key));
+  const rest = all.filter(t => !t.date || (inWin(t) && !rowKeys.has(iso(monday(pd(t.date))))));
+  if (!S.spSeen) S.spSeen = {}; if (!s.set && !S.spSeen[tf || '-']) { S.spSeen[tf || '-'] = 1; S.tsec.add('sp'); }   // noch nie eingestellt: Planungsbereich einmal offen zeigen
+  const times = tm ? teamSessions(tm).map(x => WD[x.wd] + (x.time ? ' ' + x.time : '')).join(', ') || 'keine Trainingszeit' : s.days.map(d => WD[d]).join(', ');
+  const panel = `<details class="card tsec" data-k="sp" ${S.tsec.has('sp') ? 'open' : ''}><summary><b>Saison planen</b> <span class="muted small">${esc(st.name)} · ab ${fmtDate(s.start)} · ${esc(times)}</span></summary>
+    <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label>${yearSel}</div>
+    <div class="grid2"><label>Saisonstart${(s.starts || {})[seasonYear()] ? ' (eigenes Datum)' : ' (Vorgabe 1. Mai)'}<input type="date" data-b="s:startOwn" data-r="1" value="${esc(s.start)}"></label>${tm ? '<span></span>' : `<label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label>`}</div>
     ${tm ? `<div class="small muted">Trainingszeiten von ${esc(tm.name)}</div><p class="nomargin">${teamSessions(tm).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit.'}</p><p class="small"><a href="#/team/${tm.id}/edit">Trainingszeiten bearbeiten</a></p>` : `<div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>`}
-    <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'}</p></details>
-  ${S.flow ? '' : `<button class="btn block" data-a="planOpen" data-team="${esc(S.sTeam)}" data-s="${esc(s.stage)}" data-mode="season">Ganzen Block mit eigenem Starttermin planen</button>`}
-  ${seasonWeeks().map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
-    <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? chip('diese Woche') : ''}</span><button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button></div>
-    ${r.hol ? '' : r.b ? `<div class="small"><a href="#/rtp/${st.id}/${r.b.nr}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>
-      ${r.first ? `<button class="btn sm" data-a="sBlock" data-k="${r.b.nr}">Ganzen Block ${r.b.nr} planen</button>` : ''}${r.ev.length ? `<div class="chips">${r.ev.map(e => chip('📌 ' + e)).join('')}</div>` : ''}
-      <div class="chips">${dayChips(r, byDate, st)}</div>` : '<div class="small muted">Saisonpause / frei</div>'}</div>`).join('')}`;
+    <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen unten mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'} Freie Einheiten legst du mit «+» an.</p>
+    ${flow ? '' : `<button class="btn block" data-a="planOpen" data-team="${esc(tf)}" data-s="${esc(s.stage)}" data-mode="season">Ganzen Block planen</button>`}</details>`;
+  return trTop('season') + `<p class="small muted nomargin">Saison ${seasonLabel(y)} · ${all.filter(inWin).length} Trainings${tm ? ' · ' + esc(tm.name) : ''}</p>${panel}
+  ${rows.map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
+    <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? nowChip : ''}</span><button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button></div>
+    ${r.hol ? '<div class="small muted">Ferienwoche</div>' : r.b ? `<div class="small"><a href="#/rtp/${st.id}/${r.b.nr}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>
+      ${r.first ? `<button class="btn sm" data-a="sBlock" data-k="${r.b.nr}">Ganzen Block ${r.b.nr} planen</button>` : ''}${r.ev.length ? `<div class="chips">${r.ev.map(e => chip('📌 ' + e)).join('')}</div>` : ''}` : '<div class="small muted">Saisonpause / frei</div>'}
+    ${lines(r.key, false)}
+    ${!r.hol && r.b ? `<div class="chips">${missChips(r, byDate, st)}</div>` : ''}</div>`).join('')}
+  ${restCard(rest)}`;
 }
 
 function seasonCreate(st, b, w, idx, date, sess, tm) {   // sess = Einheit, auf die das Training fällt (Startzeit, Ort, Dauer); tm = Mannschaft oder null
@@ -793,10 +820,9 @@ function viewPlan() {
 
 // ---------- Ansicht: Kalender ----------
 function viewCal() {
-  const now = new Date(), todayIso = iso(now);
-  const c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth(), day: todayIso, team: '' });
-  if (c.team && !teamById(c.team)) c.team = '';
-  const byDate = {}; DB.trainings.forEach(t => { if (!t.date) return; const tm = teamOf(t); if (c.team && (!tm || tm.id !== c.team)) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
+  const now = new Date(), todayIso = iso(now), tf = tFilter();
+  const c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth(), day: todayIso });
+  const byDate = {}; DB.trainings.forEach(t => { if (!t.date) return; const tm = teamOf(t); if (tf && (!tm || tm.id !== tf)) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
   const first = new Date(c.y, c.m, 1), start = monday(first), weeks = Math.ceil(((first.getDay() + 6) % 7 + new Date(c.y, c.m + 1, 0).getDate()) / 7);
   const cells = []; for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i), k = iso(d), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color);
@@ -804,11 +830,10 @@ function viewCal() {
   }
   const day = c.day ? pd(c.day) : null, dts = day ? (byDate[c.day] || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')) : [];
   const card = t => { const tm = teamOf(t); return `<a class="card tcard item" style="--c:${esc(tm ? tm.color : '#6b7785')}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${tm ? teamDot(tm) + '<b>' + esc(tm.name) + '</b> · ' : ''}${[t.start && `${t.start}–${endTime(t)}`, t.ort, t.sp].filter(Boolean).map(esc).join(' · ') || 'ohne Uhrzeit'}</div></a>`; };
-  return head('Kalender', null, `<button class="btn" data-a="calToday">Heute</button>`, 'Monatsübersicht der Trainings') + seg('cal') + `
-  ${DB.teams.length ? `<div class="chips"><button class="chip ${c.team ? '' : 'sel'}" data-a="calTeam" data-k="">Alle Mannschaften</button>${DB.teams.map(x => `<button class="chip ${c.team === x.id ? 'sel' : ''}" data-a="calTeam" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''}
-  <div class="row calnav"><button class="btn" data-a="calNav" data-d="-1" aria-label="Voriger Monat">‹</button><b class="grow center">${MONTHS[c.m]} ${c.y}</b><button class="btn" data-a="calNav" data-d="1" aria-label="Nächster Monat">›</button></div>
+  return trTop('cal') + `
+  <div class="row calnav"><button class="btn" data-a="calNav" data-d="-1" aria-label="Voriger Monat">‹</button><b class="grow center">${MONTHS[c.m]} ${c.y}</b><button class="btn" data-a="calNav" data-d="1" aria-label="Nächster Monat">›</button><button class="btn sm" data-a="calToday">Heute</button></div>
   <div class="cal"><div class="cal-h">${[1, 2, 3, 4, 5, 6, 0].map(d => `<span>${WD[d]}</span>`).join('')}</div><div class="cal-g">${cells.join('')}</div></div>
-  ${day ? `<h2>${WDL[day.getDay()]}, ${dm(day)}${day.getFullYear()}</h2>${dts.map(card).join('') || '<p class="muted">An diesem Tag ist kein Training geplant.</p>'}<button class="btn pri block" data-a="newT" data-team="${esc(c.team)}" data-date="${c.day}">+ Training an diesem Tag</button>` : '<p class="muted small center">Tippe auf einen Tag, um seine Trainings zu sehen oder eines anzulegen.</p>'}`;
+  ${day ? `<h2>${WDL[day.getDay()]}, ${dm(day)}${day.getFullYear()}</h2>${dts.map(card).join('') || '<p class="muted">An diesem Tag ist kein Training geplant.</p>'}<button class="btn pri block" data-a="newT" data-team="${esc(tf)}" data-date="${c.day}">+ Training an diesem Tag</button>` : '<p class="muted small center">Tippe auf einen Tag, um seine Trainings zu sehen oder eines anzulegen.</p>'}`;
 }
 
 // ---------- Ansichten: Mannschaften ----------
@@ -1227,7 +1252,7 @@ function roTeam() {
   const p = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent); let tm = null;
   if (p[0] === 't' && !['run', 'view'].includes(p[2])) { const t = getT(p[1]); tm = t && teamOf(t); }
   else if (p[0] === 'team' && p[1] && p[1] !== 'new') tm = teamById(p[1]);
-  else if (p[0] === 'season') tm = teamById(S.sTeam);
+  else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
 }
 const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow']);
@@ -1386,9 +1411,9 @@ const A = {
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
   calDay(el) { const c = S.cal, d = pd(el.dataset.d); c.day = el.dataset.d; c.y = d.getFullYear(); c.m = d.getMonth(); render(); },
-  calTeam(el) { S.cal = S.cal || {}; if (S.cal.y === undefined) { const n = new Date(); Object.assign(S.cal, { y: n.getFullYear(), m: n.getMonth(), day: iso(n) }); } S.cal.team = el.dataset.k; if (location.hash !== '#/cal') go('/cal'); else render(); },
+  calTeam(el) { S.team = el.dataset.k; go('/cal'); },   // z. B. «Kalender» auf der Mannschaftsseite
   newT(el) { S.seed = { team: el.dataset.team || '', date: el.dataset.date || '' }; go('/new'); },
-  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k, ...S.seed }; const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.sTeam = tm.id; save(); } go(k === 'rtp' ? '/rtp' : '/season'); },
+  flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); S.flow = { k, ...S.seed }; const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.team = tm.id; save(); } go(k === 'rtp' ? '/rtp' : '/season'); },
   flowCancel() { S.flow = null; S.seed = { team: '', date: '' }; go('/'); },
   mColor(el) { S.mf.color = el.dataset.k; document.querySelectorAll('[data-a=mColor]').forEach(b => b.classList.toggle('sel', b === el)); },
   mAddS() {
@@ -1396,7 +1421,7 @@ const A = {
     f.sessions.push({ id: uid(), wd: wd ?? 2, time: last.time || '', min: last.min || (stageById(f.stage) || {}).minutes || 0, ort: last.ort || '' }); render();
   },
   mDelS(el) { S.mf.sessions = S.mf.sessions.filter(x => x.id !== el.dataset.id); render(); },
-  teamSeason(el) { S.sTeam = el.dataset.k; render.seasonScrolled = false; go('/season'); },
+  teamSeason(el) { S.team = el.dataset.k; render.seasonScrolled = false; go('/season'); },
   saveTeam() {
     const f = S.mf, name = f.name.trim(); if (!name) return toast('Bitte einen Namen eingeben');
     if (DB.teams.some(x => x.id !== f.id && x.name.trim().toLowerCase() === name.toLowerCase())) return toast('Diese Mannschaft gibt es schon');
@@ -1415,7 +1440,7 @@ const A = {
     const spx = spOf(tm.id); if (spx) delete DB.spaces[tm.id];
     DB.teams.splice(idx, 1); delete DB.seasons[tm.id];
     if (all) { const ids = new Set(mine.map(t => t.id)); DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); } else mine.forEach(t => setTeam(t, null));
-    if (S.team === tm.id) S.team = ''; if (S.sTeam === tm.id) S.sTeam = ''; save(); go('/teams');
+    if (S.team === tm.id) S.team = ''; save(); go('/teams');
     toast(all ? `«${tm.name}» und ${mine.length} Trainings gelöscht` : `«${tm.name}» gelöscht – ${mine.length} Trainings bleiben ohne Mannschaft`, 'Rückgängig', () => { DB.teams.splice(idx, 0, tm); if (cfg) DB.seasons[tm.id] = cfg; if (spx) DB.spaces[tm.id] = spx; if (all) DB.trainings.push(...mine); else prev.forEach(([t, tn, ti]) => { t.team = tn; t.teamId = ti; }); save(); render(); });
   },
   pickCancel() { const id = S.pick; S.pick = null; go(id && getT(id) ? `/t/${id}` : '/'); },
@@ -1432,7 +1457,7 @@ const A = {
   dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
   delT() { const t = curT(); removeTrainings([t]); go('/'); },
   toastAct() { const fn = toast.fn; toast.fn = null; $('#toast').className = ''; fn && fn(); },
-  teamF(el) { S.team = el.dataset.k; render(); },
+  teamF(el) { S.team = el.dataset.k; render.seasonScrolled = false; render(); },
   selMode() { S.sel = S.sel ? null : new Set(); render(); },
   selT(el) { const id = el.dataset.id; S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); render(); },
   selAll() { const all = S.visible.every(id => S.sel.has(id)); S.sel = new Set(all ? [] : S.visible); render(); },
@@ -1450,7 +1475,7 @@ const A = {
     if (st.slots) b.weeks.forEach(w => w.trainings.forEach((_, i) => { trainingFromRtp(st.id, b.nr, w.w, i); n++; })); else for (let i = 0; i < 12; i++, n++) trainingFromRtp(st.id, b.nr, 0, i);
     S.flow = null; done(`${n} Trainings erstellt (${st.id} · Block ${b.nr}) – hier in der Liste.`, '/');
   },
-  sBlock(el) { openPlan({ team: S.sTeam, stage: seasonCfg().stage, block: el.dataset.k, mode: 'season' }); },
+  sBlock(el) { openPlan({ team: S.team, stage: seasonCfg().stage, block: el.dataset.k, mode: 'season' }); },
   planOpen(el) { const d = el.dataset; let team = d.team || ''; if (!team && d.auto) { const l = DB.teams.filter(x => x.stage === d.s); if (l.length === 1) team = l[0].id; } openPlan({ team, stage: d.s || (teamById(team) || {}).stage || '', block: d.b2, mode: d.mode || (d.b2 ? 'season' : 'own') }); },
   planMode(el) { const P = S.plan; P.mode = el.dataset.k; if (P.mode === 'own' && !P.start) P.start = iso(new Date()); render(); },
   planFill(el) { S.plan.fill = el.dataset.k === '1'; render(); },
@@ -1553,9 +1578,9 @@ const A = {
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
   fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
-  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), tm = teamById(S.sTeam), sess = planSessions(seasonCfg(), tm).find(x => x.id === d.x), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d, sess, tm); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
+  sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), tm = teamById(S.team), sess = planSessions(seasonCfg(), tm).find(x => x.id === d.x), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d, sess, tm); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
-  sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; spU(S.sTeam); save(); render(); },
+  sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; spU(S.team); save(); render(); },
   runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); runKeep(); render(); },
   runReset() { runSet(curT(), S.run.i); render(); },
   runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); runKeep(); render(); scrollTo(0, 0); },
@@ -1599,10 +1624,9 @@ function onInput(ev) {
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
   else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
   else if (k === 'ms') { const f = S.mf, x = f.sessions.find(y => y.id === a); if (!x) return; x[b] = b === 'wd' ? +v : v; if (b === 'min') f.minEdited = 1; }
-  else if (k === 's' && a === 'team') { S.sTeam = v; render.seasonScrolled = false; render(); return; }
   else if (k === 's' && a === 'year') { S.sYear = +v === seasonYearNow() ? 0 : +v; render.seasonScrolled = false; render(); return; }
-  else if (k === 's' && a === 'startOwn') { const s = seasonCfg(), y = seasonYear(); s.starts = s.starts || {}; if (!v || v === seasonDefault(y)) delete s.starts[y]; else s.starts[y] = v; s.set = 1; spU(S.sTeam); render.seasonScrolled = false; save(); }
-  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; spU(S.sTeam); if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
+  else if (k === 's' && a === 'startOwn') { const s = seasonCfg(), y = seasonYear(); s.starts = s.starts || {}; if (!v || v === seasonDefault(y)) delete s.starts[y]; else s.starts[y] = v; s.set = 1; spU(S.team); render.seasonScrolled = false; save(); }
+  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; spU(S.team); if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
   else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
   if (rer) render();
 }
