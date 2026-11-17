@@ -47,7 +47,7 @@ begin
   if char_length(coalesce(p_o, '')) < 20 or char_length(coalesce(p_w, '')) < 20 or char_length(coalesce(p_r, '')) < 20 then raise exception 'token zu kurz'; end if;
   if p_o = p_w or p_o = p_r or p_w = p_r then raise exception 'token muessen verschieden sein'; end if;
   if (select count(*) from public.spaces) >= 500 then raise exception 'limit erreicht'; end if;
-  if (select count(*) from public.spaces where created > now() - interval '1 hour') >= 20 then raise exception 'zu viele neue raeume, spaeter nochmals versuchen'; end if;
+  if (select count(*) from public.spaces where created > now() - interval '1 day') >= 30 then raise exception 'zu viele neue raeume, spaeter nochmals versuchen'; end if;
   if exists (select 1 from public.spaces where id = p_id) then raise exception 'raum existiert schon'; end if;
   insert into public.spaces(id, data, ver, o_hash, w_hash, r_hash)
   values (p_id, coalesce(p_data, ''), 1, public.sp_hash(p_o), public.sp_hash(p_w), public.sp_hash(p_r));
