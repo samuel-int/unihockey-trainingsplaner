@@ -189,9 +189,18 @@ function lib() {
     }
   }
   G.exercises.forEach(x => m.set('g:' + norm(x.name), { ...x, key: 'g:' + norm(x.name), kind: 'goalie', src: 'goalie', stages: new Set(x.stages), sps: new Set([G.cats[x.cat]]), efs: new Set(), uses: new Set() }));
-  DB.custom.forEach(x => m.set('c:' + x.id, { ...x, key: 'c:' + x.id, src: 'custom', stages: new Set(x.stages || []), sps: new Set(), efs: new Set(), uses: new Set() }));
+  DB.custom.forEach(x => m.set('c:' + x.id, { ...x, key: 'c:' + x.id, src: 'custom', stages: new Set(strArr(x.stages)), sps: new Set(strArr(x.sps)), efs: new Set(strArr(x.efs)), uses: new Set() }));
   return LIB = [...m.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
 }
+// Erscheinungsformen (EF) und Schwerpunkte (SP) für eigene Übungen, ausgewählt aus dem RTP. Anders geschriebene EF der Blöcke (Tippfehler, «Klare Torchancen» …) werden über die Muster EFC der Standardliste R.efs.teta zugeordnet.
+const strArr = v => Array.isArray(v) ? v.filter(x => typeof x === 'string' && x) : [];
+const efCanon = ef => { if (!ef) return ''; const i = EFC.findIndex(([re]) => re.test(norm(ef))); return i >= 0 && R.efs.teta[i] ? R.efs.teta[i] : ef; };
+const deSort = (a, b) => a.localeCompare(b, 'de');
+function rtpSps(stages, efs) {   // Schwerpunkte der RTP-Blöcke (Haupt- und Nebenschwerpunkt) zu den gewählten Stufen und Erscheinungsformen
+  const out = new Set(); if (stages.length && efs.length) for (const st of R.stages) if (stages.includes(st.id)) for (const b of st.blocks) for (const p of [b.main, b.sec]) if (p && p.sp && efs.includes(efCanon(p.ef))) out.add(p.sp);
+  return [...out].sort(deSort);
+}
+const allSps = () => [...new Set(R.stages.flatMap(st => st.blocks.flatMap(b => [b.main, b.sec].filter(p => p && p.sp).map(p => p.sp))))].sort(deSort);
 const libGet = key => lib().find(e => e.key === key);
 const goalieEx = name => lib().find(e => e.kind === 'goalie' && e.name === name);
 // Link zur Übung im UTP und deren Text (UTPX = app/data-utp.js, von tools/build-utp.js; Texte © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell). Pro Stufe zuerst die Stufen-Adresse, sonst die allgemeine.
@@ -374,7 +383,12 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
 // wird der Text geändert – im Training oder in der Bibliothek –, bekommen ihn alle Trainings mit dieser Übung, auch vergangene.
 const customTxt = e => ({ desc: [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'), coach: [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n') });
 const customOf = it => { const id = it.lib && String(it.lib).startsWith('c:') ? String(it.lib).slice(2) : ''; return (id && DB.custom.find(x => x.id === id)) || (!it.lib && it.name && DB.custom.find(x => x.name && norm(x.name) === norm(it.name))) || null; };
-function syncCustom(c) { const x = customTxt(c); let k = 0; c.u = Date.now(); for (const t of DB.trainings) for (const it of t.items) if (customOf(it) === c) { it.desc = x.desc; it.coach = x.coach; t.updated = Date.now(); k++; } LIB = null; save(); return k; }
+function syncCustom(c) { const x = customTxt(c); let k = 0; c.u = Date.now(); for (const t of DB.trainings) for (const it of t.items) if (customOf(it) === c) { it.lib = 'c:' + c.id; it.name = c.name; it.desc = x.desc; it.coach = x.coach; t.updated = Date.now(); k++; } LIB = null; save(); return k; }
+// Vor dem Umbenennen: Blöcke, die nur über den Namen zur eigenen Übung gehören, fest verknüpfen (sonst gingen sie beim neuen Namen verloren).
+const linkC = c => { for (const t of DB.trainings) for (const it of t.items) if (!it.lib && customOf(it) === c) it.lib = 'c:' + c.id; };
+// Freier Block: weder eigene Übung noch Bibliothek (RTP, UTP, Goalie, Athletik, Swiss Way) – sein Name ist gesperrt, er lässt sich aber als eigene Übung speichern.
+const isFree = it => !customOf(it) && it.type !== 'athletik' && !it.ath && !it.sw && !isSw(it) && !(it.lib && libGet(it.lib)) && !(it.name && libGet(norm(it.name)));
+function exTog(field, k) { const f = S.form; f[field] = f[field].includes(k) ? f[field].filter(x => x !== k) : [...f[field], k]; delete S.fx.bad[field]; render(); }
 function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
   const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
@@ -433,7 +447,7 @@ function trailOf() {
   }
   if (p[0] === 't') {
     const t = getT(p[1]); if (!t) return [TR, ['Nicht gefunden']];
-    const x = { run: 'Hallenmodus', view: 'Übersicht', att: 'Anwesenheit', end: 'Abschluss' }[p[2]];
+    const x = { run: 'Hallenmodus', view: 'Übersicht', att: 'Anwesenheit', end: 'Abschluss', newex: 'Neue eigene Übung' }[p[2]];
     return x ? [...tPath(t), [x]] : tPath(t);
   }
   if (p[0] === 'lib') {
@@ -513,16 +527,20 @@ function goalieSummary(g) {
 function itemCard(t, it, i) {
   const ty = TYPES[it.type] || TYPES.sonst, open = S.open.has(it.id), g = it.g || (it.g = { mode: 'team', name: '', text: '' });
   const gopts = lib().filter(e => e.kind === 'goalie');
-  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null, u = itemUtp(it, t), ux = u && itemEx(it, t), cx = customOf(it);
+  const gx = g.mode === 'own' && g.name ? goalieEx(g.name) : null, u = itemUtp(it, t), ux = u && itemEx(it, t), cx = customOf(it), free = !cx && isFree(it);
+  // Namen sind gesperrt, ausser bei eigenen Übungen (dort gilt die Änderung für die Übung in allen Trainings)
+  const nameEl = cx ? `<input class="name" data-b="x:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">` : `<div class="name ro" data-a="tog" data-id="${it.id}" role="button">${esc(it.name || ty[0])}</div>`;
+  const lockNote = cx ? '' : free ? `<div class="cxbox"><div class="small muted">🔒 Der Name ist gesperrt, weil dieser Block keine Bibliotheksübung ist. Speichere ihn als eigene Übung: dann kannst du den Namen ändern und die Übung in anderen Trainings verwenden.</div><button class="btn sm" data-a="freeToC" data-id="${it.id}">Als eigene Übung speichern</button></div>` : '<div class="small muted">🔒 Der Name ist gesperrt. Umbenennen kannst du nur eigene Übungen.</div>';
   return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}">
     <div class="row"><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
-      <input class="name" data-b="i:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">
+      ${nameEl}
       <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
     ${open ? `<div class="body">
       ${athHtml(it.ath)}${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
       ${reflHint(reflKey(it))}
+      ${lockNote}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
-      ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen am Text gelten für diese Übung in allen Trainings, auch in vergangenen.</div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : isSw(it) ? 14 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>${isSw(it) && SWD ? `<div class="row wrap"><button class="btn sm" data-a="swNew" data-id="${it.id}">Andere Auswahl</button><span class="small muted grow">Wählt die Übungen des Tages neu aus und ersetzt die Beschreibung.</span></div>` : ''}`}
+      ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen an Name und Text gelten für diese Übung in allen Trainings, auch in vergangenen. <a href="#/lib/edit/${cx.id}">Stufen, Erscheinungsformen, Schwerpunkte …</a></div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : isSw(it) ? 14 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>${isSw(it) && SWD ? `<div class="row wrap"><button class="btn sm" data-a="swNew" data-id="${it.id}">Andere Auswahl</button><span class="small muted grow">Wählt die Übungen des Tages neu aus und ersetzt die Beschreibung.</span></div>` : ''}`}
       <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it, t))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
       ${cx ? '' : `<label>${ux ? 'Eigene Keypoints / Coachingfragen' : 'Keypoints / Coachingfragen'}<textarea data-b="i:${it.id}:coach" rows="2" placeholder="${ux ? 'Optional: zusätzlich zu den Keypoints oben' : ''}">${esc(it.coach)}</textarea></label>`}
       <div class="gbox"><b>🧤 Goalie</b>
@@ -552,7 +570,7 @@ function viewEdit(t) {
       ${t.rtp ? `<p class="small"><a href="#/rtp/${t.rtp.stage}/${t.rtp.block}">→ RTP-Block ${t.rtp.block} ansehen</a></p>` : ''}</details></div>
   <div class="row sum"><span id="sum">${sumHtml(t)}</span><span class="grow"></span><button class="btn sm" data-a="togAll">${t.items.every(i => S.open.has(i.id)) && t.items.length ? 'Alle zuklappen' : 'Alle aufklappen'}</button></div>
   ${t.items.map((it, i) => itemCard(t, it, i)).join('') || '<p class="muted center">Noch keine Blöcke.</p>'}
-  <div class="row wrap"><button class="btn pri" data-a="pick">+ Aus Bibliothek</button><button class="btn" data-a="addI">+ Leerer Block</button><button class="btn gbtn" data-a="addG">+ Goalie-Übung</button></div>
+  <div class="row wrap"><button class="btn pri" data-a="pick">+ Aus Bibliothek</button><button class="btn" data-a="newEx">+ Neue eigene Übung</button><button class="btn gbtn" data-a="addG">+ Goalie-Übung</button></div>
   <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><a class="btn" href="#/t/${t.id}/view">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
 }
 
@@ -693,24 +711,46 @@ function viewLibItem(e) {
     ${e.uses.size ? `<div class="card"><b>Vorkommen im RTP</b>${usesHtml(e)}</div>` : ''}`;
   return head(pt ? 'Übung ansehen' : 'Übung', '/lib', '', pt ? `für: <b>${esc(pt.title)}</b>` : '', ctxBar()) + `<div class="card item" style="--c:${ty[1]}"><h2 class="nomargin">${esc(e.name)}</h2>
     <div class="chips">${chip(ty[0], ty[1])}${[...e.stages].map(s => chip(s)).join('')}${[...(e.faktoren || [])].map(s => chip(s)).join('')}</div>
-    ${[...e.sps].length && e.src === 'rtp' ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}${reflHint(e.key)}</div>${body}
+    ${e.src === 'custom' && e.efs.size ? `<p class="small">Erscheinungsform: ${esc([...e.efs].join('; '))}</p>` : ''}${[...e.sps].length && (e.src === 'rtp' || e.src === 'custom') ? `<p class="small">Schwerpunkte: ${esc([...e.sps].join(', '))}</p>` : ''}${reflHint(e.key)}</div>${body}
     <button class="btn pri block" data-a="addLib" data-k="${esc(e.key)}">${pt ? `Zu «${esc(pt.title)}» hinzufügen` : 'Zu einem Training hinzufügen'}</button>`;
+}
+// ---------- Eigene Übung: Formular (Bibliothek und direkt im Training) ----------
+// Pflicht: Name, Stufe(n), Erscheinungsform(en), Schwerpunkt(e), Keypoints, Coachingfragen. Gespeichert wird erst, wenn alles ausgefüllt ist.
+// S.form (die Übung im Formular) und S.fx (Hilfszustand: bad = fehlende Felder, allSp = alle Schwerpunkte zeigen, tid = Training, adopt = Block, der zur eigenen Übung wird)
+// bleiben über Neuzeichnen (Chips) erhalten, solange die Adresse gleich bleibt (S.formKey); render() verwirft sie beim Verlassen.
+const EX_REQ = { name: 'Bitte einen Namen eingeben', stages: 'Wähle mindestens eine Stufe', efs: 'Wähle mindestens eine Erscheinungsform', sps: 'Wähle mindestens einen Schwerpunkt', coach: 'Keypoints fehlen', fragen: 'Coachingfragen fehlen' };
+const exBlank = t => ({ id: null, name: '', kind: 'gp', stages: [t ? t.stage : DB.stage], efs: t && t.ef ? [efCanon(t.ef)] : [], sps: t && t.sp ? [t.sp] : [], min: 15, mat: '', desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' });
+function formEnsure(init, tid) { const h = location.hash.slice(1); if (!S.form || S.formKey !== h) { S.form = init(); S.fx = { bad: {}, allSp: false, tid: tid || '', adopt: '' }; S.formKey = h; } return S.form; }
+const exMissing = f => { const m = {}; if (!String(f.name).trim()) m.name = 1; if (!f.stages.length) m.stages = 1; if (!f.efs.length) m.efs = 1; if (!f.sps.length) m.sps = 1; if (!String(f.coach).trim()) m.coach = 1; if (!String(f.fragen).trim()) m.fragen = 1; return m; };
+function exForm(f, tid) {
+  const fx = S.fx, bad = k => fx.bad[k] ? ' bad' : '', msg = k => fx.bad[k] ? `<span class="reqmsg">${EX_REQ[k]}</span>` : '', star = '<i class="req" aria-hidden="true">*</i>';
+  const efOpts = [...new Set([...R.efs.teta, ...f.efs])], spList = [...new Set([...(fx.allSp ? allSps() : rtpSps(f.stages, f.efs)), ...f.sps])].sort(deSort);
+  const chipRow = (list, sel, act) => list.map(v => `<button class="chip ${sel.includes(v) ? 'sel' : ''}" data-a="${act}" data-k="${esc(v)}" aria-pressed="${sel.includes(v)}">${esc(v)}</button>`).join('');
+  return `<p class="small muted nomargin">Mit ${star} markierte Felder sind Pflicht. Die Übung wird erst gespeichert, wenn alle ausgefüllt sind.</p>
+    <label class="${bad('name').trim()}">Name ${star}<input data-b="c:name" value="${esc(f.name)}" autocomplete="off">${msg('name')}</label>
+    <div class="fgrp${bad('stages')}"><div class="flab">Stufe(n) ${star}</div><div class="chips">${chipRow(R.stages.map(s => s.id), f.stages, 'cStage')}</div>${msg('stages')}</div>
+    <div class="fgrp${bad('efs')}"><div class="flab">Erscheinungsform(en) ${star}</div><div class="chips wrapt">${chipRow(efOpts, f.efs, 'cEf')}</div>${msg('efs')}</div>
+    <div class="fgrp${bad('sps')}"><div class="flab">Schwerpunkt(e) ${star}</div>
+      ${spList.length ? `<div class="chips wrapt">${chipRow(spList, f.sps, 'cSp')}</div>` : '<p class="small muted nomargin">Wähle zuerst Stufe und Erscheinungsform: dann erscheinen die passenden Schwerpunkte aus dem RTP.</p>'}
+      <button class="btn sm" data-a="cSpAll">${fx.allSp ? 'Nur passende anzeigen' : 'Weitere anzeigen'}</button>${msg('sps')}</div>
+    <label class="${bad('coach').trim()}">Keypoints ${star}<textarea data-b="c:coach" rows="3">${esc(f.coach)}</textarea>${msg('coach')}</label>
+    <label class="${bad('fragen').trim()}">Coachingfragen ${star}<textarea data-b="c:fragen" rows="3">${esc(f.fragen)}</textarea>${msg('fragen')}</label>
+    <h3>Weitere Angaben (freiwillig)</h3>
+    <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
+    <label>🎒 Material<input data-b="c:mat" value="${esc(f.mat || '')}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
+    <label>Beschreibung<textarea data-b="c:desc" rows="5">${esc(f.desc)}</textarea></label>
+    <details><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="c:leichter" rows="2">${esc(f.leichter)}</textarea></label><label>Erschweren<textarea data-b="c:schwerer" rows="2">${esc(f.schwerer)}</textarea></label><label>Variieren<textarea data-b="c:vari" rows="2">${esc(f.vari)}</textarea></label></details>
+    <label>🧤 Goalie-Hinweis<textarea data-b="c:goalie" rows="2">${esc(f.goalie)}</textarea></label>
+    <button class="btn pri block" data-a="saveC">${tid ? (fx.adopt ? 'Als eigene Übung speichern' : 'Speichern und ins Training einfügen') : 'Speichern'}</button>${tid ? '<button class="btn block" data-a="newExCancel">Abbrechen</button>' : ''}`;
 }
 function viewLibForm(id) {
   const c = id ? DB.custom.find(x => x.id === id) : null;
-  S.form = c ? { ...c, stages: [...(c.stages || [])] } : { id: null, name: '', kind: 'gp', stages: [DB.stage], min: 15, mat: '', desc: '', coach: '', fragen: '', leichter: '', schwerer: '', vari: '', goalie: '' };
-  const f = S.form;
-  return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', c ? esc(c.name) : 'Wird in der Bibliothek gespeichert', ctxBar()) + `<div class="card">
-    <label>Name<input data-b="c:name" value="${esc(f.name)}"></label>
-    <div class="grid2"><label>Typ<select data-b="c:kind">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], f.kind)).join('')}</select></label><label>Dauer (Min.)<input type="number" inputmode="numeric" data-b="c:min" value="${esc(f.min)}"></label></div>
-    <div class="chips">${R.stages.map(s => `<button class="chip ${f.stages.includes(s.id) ? 'sel' : ''}" data-a="cStage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
-    <label>🎒 Material<input data-b="c:mat" value="${esc(f.mat || '')}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
-    <label>Beschreibung<textarea data-b="c:desc" rows="5">${esc(f.desc)}</textarea></label>
-    <label>Keypoints<textarea data-b="c:coach" rows="2">${esc(f.coach)}</textarea></label>
-    <label>Coachingfragen<textarea data-b="c:fragen" rows="2">${esc(f.fragen)}</textarea></label>
-    <details><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="c:leichter" rows="2">${esc(f.leichter)}</textarea></label><label>Erschweren<textarea data-b="c:schwerer" rows="2">${esc(f.schwerer)}</textarea></label><label>Variieren<textarea data-b="c:vari" rows="2">${esc(f.vari)}</textarea></label></details>
-    <label>🧤 Goalie-Hinweis<textarea data-b="c:goalie" rows="2">${esc(f.goalie)}</textarea></label>
-    <button class="btn pri block" data-a="saveC">Speichern</button></div>`;
+  const f = formEnsure(() => c ? { ...exBlank(), ...JSON.parse(JSON.stringify(c)), stages: strArr(c.stages), efs: strArr(c.efs), sps: strArr(c.sps) } : exBlank());
+  return head(c ? 'Übung bearbeiten' : 'Eigene Übung erstellen', '/lib', '', c ? esc(c.name) : 'Wird in der Bibliothek gespeichert', ctxBar()) + `<div class="card">${exForm(f, '')}</div>`;
+}
+function viewNewEx(t) {   // «Neue eigene Übung» im Training (oder ein freier Block, der zur eigenen Übung wird)
+  S.pick = null; const f = formEnsure(() => exBlank(t), t.id), nm = esc(t.title || 'Training');
+  return head(S.fx.adopt ? 'Als eigene Übung speichern' : 'Neue eigene Übung', '/t/' + t.id, '', (S.fx.adopt ? 'Block von: ' : 'für: ') + '<b>' + nm + '</b>') + `<div class="card">${exForm(f, t.id)}</div>`;
 }
 
 // ---------- Ansicht: RTP ----------
@@ -1542,7 +1582,7 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen']);
+const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
@@ -1656,6 +1696,7 @@ function render() {
   if (!S.flow && p[0] !== 'new') S.seed = { team: '', date: '' };
   if (p[0] !== 'team') S.mf = null;
   if (p[0] !== 'plan') S.plan = null;
+  if (S.form && S.formKey !== h) { S.form = null; S.fx = null; }   // Formular «eigene Übung» nur, solange man auf seiner Seite bleibt
   if (S.done && S.done.h !== '/' + p.map(encodeURIComponent).join('/')) S.done = null;
   if (!p.length) html = viewHome();
   else if (p[0] === 'new') { html = NEWV(); tab = '/'; }
@@ -1666,7 +1707,7 @@ function render() {
     const t = getT(p[1]); tab = '/';
     if (t) { const tmx = teamOf(t), spx = SYNC_ON && tmx && spOf(tmx.id); if (!(spx && spx.role === 'r')) swEnsure(t); }   // Swiss-Way-Beschreibung erzeugen (nicht bei «Nur lesen»)
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
-    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else if (p[2] === 'end') html = viewEnd(t, +p[3] === 2 ? 2 : 1); else html = viewEdit(t);
+    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else if (p[2] === 'end') html = viewEnd(t, +p[3] === 2 ? 2 : 1); else if (p[2] === 'newex') html = viewNewEx(t); else html = viewEdit(t);
   } else if (p[0] === 'lib') {
     if (p[1] === 'new') html = viewLibForm(); else if (p[1] === 'edit') html = viewLibForm(p[2]);
     else if (p[1] === 'x') { const e = libGet(p.slice(2).join('/')); html = e ? viewLibItem(e) : head('Übung', '/lib') + '<p class="muted center">Übung nicht gefunden.</p>'; }
@@ -1749,7 +1790,6 @@ const A = {
   mv(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= t.items.length) return; [t.items[i], t.items[j]] = [t.items[j], t.items[i]]; touch(t); render(); },
   delI(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id), it = t.items.splice(i, 1)[0]; touch(t); render(); toast('Block entfernt', 'Rückgängig', () => { t.items.splice(i, 0, it); touch(t); render(); }); },
   dupI(el) { const t = curT(), i = t.items.findIndex(x => x.id === el.dataset.id); t.items.splice(i + 1, 0, { ...JSON.parse(JSON.stringify(t.items[i])), id: uid() }); touch(t); render(); },
-  addI() { const t = curT(), it = mkItem('gp', '', 15); it.g.text = goalieFocus('gp', t.sp, t.ef, t.stage); t.items.push(it); S.open.add(it.id); touch(t); render(); },
   addG() { const t = curT(); S.pick = t.id; S.lib.kind = 'goalie'; S.lib.stage = t.stage; S.lib.sp = ''; go('/lib'); },
   pick() { const t = curT(); S.pick = t.id; S.lib.stage = t.stage; if (S.lib.kind === 'goalie') S.lib.kind = ''; go('/lib'); },
   dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; delete c.refl; delete c.reflSeen; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
@@ -1866,8 +1906,33 @@ const A = {
     const ts = [...DB.trainings].sort((a, b) => b.updated - a.updated).slice(0, 8);
     modal(`<h2>Zu welchem Training?</h2><div class="col">${ts.map(t => `<button class="btn" data-a="addLib" data-k="${esc(e.key)}" data-t="${t.id}">${esc(t.title)}${t.date ? ' · ' + fmtDate(t.date) : ''}</button>`).join('')}<button class="btn pri" data-a="addLib" data-k="${esc(e.key)}" data-t="new">+ Neues Training</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   },
-  cStage(el) { const f = S.form, k = el.dataset.k; f.stages = f.stages.includes(k) ? f.stages.filter(x => x !== k) : [...f.stages, k]; el.classList.toggle('sel'); },
-  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) { const c = DB.custom.find(x => x.id === f.id); Object.assign(c, f); syncCustom(c); } else { f.id = uid(); f.u = Date.now(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
+  newEx() { const t = curT(); if (!t) return; S.form = null; go('/t/' + t.id + '/newex'); },
+  freeToC(el) {   // freier Block ohne Bibliotheksbezug: Formular mit den Angaben des Blocks, danach ist der Block mit der neuen eigenen Übung verknüpft
+    const t = curT(), it = t && t.items.find(x => x.id === el.dataset.id); if (!it) return;
+    S.form = { ...exBlank(t), name: it.name || '', kind: TYPES[it.type] ? it.type : 'gp', min: +it.min || 15, mat: it.mat || '', desc: it.desc || '', coach: it.coach || '' };
+    S.fx = { bad: {}, allSp: false, tid: t.id, adopt: it.id }; S.formKey = '/t/' + t.id + '/newex'; go(S.formKey);
+  },
+  newExCancel() { const id = S.fx && S.fx.tid; S.form = null; S.fx = null; go(id && getT(id) ? '/t/' + id : '/lib'); },
+  cStage(el) { exTog('stages', el.dataset.k); },
+  cEf(el) { exTog('efs', el.dataset.k); },
+  cSp(el) { exTog('sps', el.dataset.k); },
+  cSpAll() { S.fx.allSp = !S.fx.allSp; render(); },
+  saveC() {
+    const f = S.form, fx = S.fx; if (!f) return;
+    const miss = exMissing(f); if (Object.keys(miss).length) { fx.bad = miss; render(); toast('Bitte fülle die rot markierten Pflichtfelder aus'); setTimeout(() => { const e = $('#app .bad'); if (e) e.scrollIntoView({ block: 'start' }); }, 30); return; }
+    const c = { ...f, name: String(f.name).trim(), min: +f.min || 10, stages: [...f.stages], efs: [...f.efs], sps: [...f.sps] };
+    let tgt = c.id && DB.custom.find(x => x.id === c.id);
+    if (tgt) { linkC(tgt); Object.assign(tgt, c); syncCustom(tgt); } else { c.id = c.id || uid(); c.u = Date.now(); DB.custom.push(c); tgt = c; }
+    LIB = null; save();
+    const t = fx.tid && getT(fx.tid), adopt = fx.adopt; S.form = null; S.fx = null;
+    if (!t) { toast('Gespeichert'); return go(`/lib/x/${encodeURIComponent('c:' + tgt.id)}`); }
+    let it = adopt && t.items.find(x => x.id === adopt);
+    if (it) { it.lib = 'c:' + tgt.id; it.name = tgt.name; if (TYPES[tgt.kind]) it.type = tgt.kind; Object.assign(it, customTxt(tgt)); if (tgt.mat) it.mat = tgt.mat; }
+    else { it = itemFromLib(libGet('c:' + tgt.id), t); t.items.push(it); }
+    S.open.add(it.id); touch(t);
+    done(adopt ? `«${tgt.name}» ist jetzt eine eigene Übung (in der Bibliothek gespeichert).` : `«${tgt.name}» in der Bibliothek gespeichert und ins Training eingefügt (ganz unten, aufgeklappt).`, `/t/${t.id}`);
+    setTimeout(() => { const e = document.querySelector(`[data-id="${it.id}"]`); if (e) e.scrollIntoView({ block: 'center' }); }, 50);
+  },
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
   fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
@@ -1934,8 +1999,8 @@ function onInput(ev) {
     else if ((a === 'why' || a === 'pn') && spSafe(b)) { const f = a === 'why' ? 'items' : 'players'; r[f] = r[f] && typeof r[f] === 'object' ? r[f] : {}; const x = r[f][b] = r[f][b] && typeof r[f][b] === 'object' ? r[f][b] : {}; x[a === 'why' ? 'why' : 'note'] = val; }
     touch(t); reflUp(t);
   }
-  else if (k === 'c') S.form[a] = v;
-  else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { c[b] = v; syncCustom(c); } }
+  else if (k === 'c') { S.form[a] = v; if (S.fx && S.fx.bad[a]) { delete S.fx.bad[a]; const l = el.closest('label'); if (l) { l.classList.remove('bad'); const m = l.querySelector('.reqmsg'); if (m) m.remove(); } } }
+  else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { if (b === 'name') { if (!String(v).trim()) return; linkC(c); c.name = String(v); } else c[b] = v; syncCustom(c); } }
   else if (k === 'pl') S.pf[a] = v;
   else if (k === 'pb') S.pb[a] = a === 'leader' ? el.checked : v;
   else if (k === 'aw') S.aw[a] = v;
