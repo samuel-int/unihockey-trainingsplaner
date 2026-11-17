@@ -394,10 +394,12 @@ const metaLine = (t, showTeam) => { const tm = teamOf(t); return `${showTeam && 
 const seg = cur => `<div class="seg">${[['/', 'Liste', 'list'], ['/cal', 'Kalender', 'cal'], ['/season', 'Saison', 'season']].map(([h, l, k]) => `<a href="#${h}" class="${cur === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
 // Trainings: drei Ansichten derselben Trainings (Liste | Kalender | Saison). Titel, «+ Neu» und der Mannschaftsfilter (S.team, gilt auch für die Saison-Konfiguration) sind überall gleich.
 const tFilter = () => { if (S.team && !teamById(S.team)) S.team = ''; return S.team || ''; };
-const teamChips = () => { const f = tFilter(); return DB.teams.length ? `<div class="chips"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Mannschaften</button>${DB.teams.map(x => `<button class="chip ${f === x.id ? 'sel' : ''}" data-a="teamF" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''; };
+const teamChips = one => { const f = tFilter(); return DB.teams.length ? `<div class="chips${one ? ' one' : ''}"><button class="chip ${f ? '' : 'sel'}" data-a="teamF" data-k="">Alle Mannschaften</button>${DB.teams.map(x => `<button class="chip ${f === x.id ? 'sel' : ''}" data-a="teamF" data-k="${esc(x.id)}">${teamDot(x)}${esc(x.name)}</button>`).join('')}</div>` : ''; };
 function trTop(cur, extra = '') {   // Kopf der drei Ansichten; im Neu-Ablauf «Über die Saisonplanung» ohne Umschalter und «+ Neu», dafür mit Ablaufleiste
   const fl = cur === 'season' && S.flow && S.flow.k === 'season';
-  return (fl ? head('Trainings', null, '', '', ctxBar()) : head('Trainings', null, `<button class="btn pri" data-a="newT" data-team="${esc(tFilter())}">+ Neu</button>`) + seg(cur)) + extra + teamChips();
+  if (fl) return head('Trainings', null, '', '', ctxBar()) + extra + teamChips();
+  // Umschalter und Mannschaftsfilter hängen in der klebrigen Kopfzeile (Parameter bar): sie bleiben sichtbar, auch wenn die Saison zur aktuellen Woche scrollt.
+  return head('Trainings', null, `<button class="btn pri" data-a="newT" data-team="${esc(tFilter())}">+ Neu</button>`, '', seg(cur) + teamChips(true)) + extra;
 }
 const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block : ''}`;
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
@@ -1671,8 +1673,12 @@ function render() {
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
   if (render.last !== h.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
   render.last = h.split('/').slice(0, 3).join('/');
-  if (p[0] === 'season' && !render.seasonScrolled) { const el = $('.week.now'); if (el) { el.scrollIntoView({ block: 'center' }); render.seasonScrolled = true; } }
+  hdrH(); const sc = $('.top .chips.one .sel'); if (sc) sc.parentNode.scrollLeft = Math.max(0, sc.offsetLeft - 24);   // gewählte Mannschaft im Filter sichtbar
+  if (p[0] === 'season' && !render.seasonScrolled) { const el = $('.week.now'); if (el) { el.scrollIntoView({ block: 'start' }); render.seasonScrolled = true; } }   // scroll-margin-top (CSS) hält die Woche unter der Kopfzeile
 }
+// Höhe der klebrigen Kopfzeile als CSS-Variable --hh (für scroll-margin-top und mitlaufende Leisten)
+function hdrH() { const h = $('#app header.top'); document.documentElement.style.setProperty('--hh', (h ? h.offsetHeight : 0) + 'px'); }
+addEventListener('resize', hdrH);
 addEventListener('hashchange', render);
 
 // ---------- Aktionen ----------
