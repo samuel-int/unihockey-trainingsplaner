@@ -128,3 +128,5 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .aw thead th:first-child { position: sticky; left: 0; background: var(--card); text-align: left; z-index: 1; } .aw td.y { color: var(--pri); font-weight: 800; } .aw td.n, .aw td.x { color: var(--muted); } .aw td.tot { font-variant-numeric: tabular-nums; }
 .chk { display: flex; align-items: center; gap: 10px; font-size: .92rem; color: var(--text); margin: 12px 0 4px; } .chk input { width: 24px; height: 24px; min-height: 0; margin: 0; flex: none; }
 .warnbox { border-left: 4px solid var(--danger); background: var(--bg); padding: 10px 12px; border-radius: 10px; margin: 10px 0; font-size: .92rem; }
+.spcard { border-left: 5px solid var(--pri); } .spcard .row { margin: 6px 0; } .spcard .btn { flex: none; }
+.rotop { border-left: 5px solid var(--danger); font-weight: 600; }

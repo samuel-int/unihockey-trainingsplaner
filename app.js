@@ -25,9 +25,10 @@ const SYNCCFG = (() => {
   return { url: String(c.url || '').trim().replace(/\/+$/, ''), key: String(c.key || '').trim() };
 })();
 const SYNC_ON = !!(SYNCCFG.url && SYNCCFG.key && window.crypto && crypto.subtle);
+const SP = { chain: Promise.resolve(), pend: new Map(), st: {}, t: null };   // Abgleich: Reihenfolge der Vorgänge, wartende, Status je Mannschaft, Timer
 let saveT;
 const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
-const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); };
+const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); spDirty(); };
 addEventListener('pagehide', flush);
 
 const S = { open: new Set(), pick: null, seed: { team: '', date: '' }, flow: null, done: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null, expl: new Set(), tsec: new Set() };
@@ -106,7 +107,7 @@ const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); retu
 // Anwesenheit am Training: t.att = { <playerId>: 1 }, t.jsType = 'Training' | 'Wettkampf' | 'Trainingstag' (fehlt = Training). Beides bleibt auf dem Gerät: slim() entfernt t.att beim Teilen, teamMeta() lässt players weg.
 const playersOf = tm => Array.isArray(tm && tm.players) ? tm.players : [];
 const pName = p => [p.first, p.last].filter(Boolean).join(' ') || 'Ohne Namen';
-const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), jsnr: String(p.jsnr || '').replace(/\D/g, '').slice(0, 12), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T' });
+const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), jsnr: String(p.jsnr || '').replace(/\D/g, '').slice(0, 12), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
 const JS_TYPES = ['Training', 'Wettkampf', 'Trainingstag'];
 const jsTypeOf = t => JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
 const attOf = t => t.att && typeof t.att === 'object' ? t.att : {};
@@ -277,7 +278,7 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
 // wird der Text geändert – im Training oder in der Bibliothek –, bekommen ihn alle Trainings mit dieser Übung, auch vergangene.
 const customTxt = e => ({ desc: [e.desc, e.leichter && 'Erleichtern: ' + e.leichter, e.schwerer && 'Erschweren: ' + e.schwerer, e.vari && 'Variieren: ' + e.vari].filter(Boolean).join('\n'), coach: [e.coach, e.fragen && 'Fragen: ' + e.fragen].filter(Boolean).join('\n') });
 const customOf = it => { const id = it.lib && String(it.lib).startsWith('c:') ? String(it.lib).slice(2) : ''; return (id && DB.custom.find(x => x.id === id)) || (!it.lib && it.name && DB.custom.find(x => x.name && norm(x.name) === norm(it.name))) || null; };
-function syncCustom(c) { const x = customTxt(c); let k = 0; for (const t of DB.trainings) for (const it of t.items) if (customOf(it) === c) { it.desc = x.desc; it.coach = x.coach; k++; } LIB = null; save(); return k; }
+function syncCustom(c) { const x = customTxt(c); let k = 0; c.u = Date.now(); for (const t of DB.trainings) for (const it of t.items) if (customOf(it) === c) { it.desc = x.desc; it.coach = x.coach; t.updated = Date.now(); k++; } LIB = null; save(); return k; }
 function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
   const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
@@ -298,11 +299,12 @@ const grpKey = t => `${t.team || ''}|${t.rtp ? t.rtp.stage + '|' + t.rtp.block :
 const endTime = t => { if (!t.start) return ''; const [h, m] = t.start.split(':').map(Number), e = h * 60 + m + total(t); return `${String(Math.floor(e / 60) % 24).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`; };
 function removeTrainings(list) {
   if (!list.length) return; const ids = new Set(list.map(t => t.id));
+  list.forEach(t => spDel('t', (teamOf(t) || {}).id, t.id));
   DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); save();
-  toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); save(); render(); });
+  toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); list.forEach(t => { t.updated = Date.now(); spDel('t', (teamOf(t) || {}).id, t.id, true); }); save(); render(); });
 }
 function modal(html) { $('#modal').innerHTML = `<div class="backdrop" data-a="close"></div><div class="sheet">${html}</div>`; $('#modal').className = 'on'; }
-function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; }
+function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; S.join = null; }
 const go = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
 const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
@@ -777,7 +779,7 @@ function viewTeams() {
   const today = iso(new Date());
   return head('Mannschaften', null, `<a class="btn pri" href="#/team/new">+ Neu</a>`, 'Jede Mannschaft hat ihren eigenen Trainingsplan') + doneBar('/teams') + (DB.teams.length ? DB.teams.map(tm => {
     const ts = teamTrainings(tm), next = ts.filter(t => t.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
-    return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="muted">${sessLines(tm)}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
+    return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}${SYNC_ON && spOf(tm.id) ? ' <span title="Mit Co-Trainern abgeglichen">🔄</span>' : ''}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="muted">${sessLines(tm)}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
   }).join('') : `<div class="card empty"><h2>Noch keine Mannschaft</h2><p>Lege deine Mannschaft an (Name, Stufe, Farbe, Ort, Trainingstage). Dann planst du ihre Trainings und die Saison direkt dort und siehst sie im Kalender in ihrer Farbe.</p><p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></p></div>`);
 }
 function viewTeam(id) {
@@ -787,7 +789,7 @@ function viewTeam(id) {
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
-  ${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
+  ${spCard(tm)}${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
 function viewTeamForm(id) {
@@ -928,11 +930,11 @@ let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); });
 function viewMore() {
   return head('Mehr') + `
-  <div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">Einzelne Trainings teilst du im Training über «Teilen» (Link, QR-Code oder Datei). Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.</p>
+  <div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">Einzelne Trainings teilst du im Training über «Teilen» (Link, QR-Code oder Datei). Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.${SYNC_ON ? ' Die Sicherungsdatei enthält dann auch die Zugangsschlüssel zu deinen Mannschaftsräumen – bewahre sie sicher auf und gib sie nicht weiter.' : ''}</p>
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
     <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
-  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern und Anwesenheiten gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p></div>
+  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern und Anwesenheiten gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> Auf der Mannschaftsseite kannst du eine Mannschaft mit Co-Trainern abgleichen. Die Daten – auch Spielerliste und Anwesenheit – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
   <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist nur auf diesem Gerät gespeichert.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
   <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
 }
@@ -978,7 +980,7 @@ function importData(d) {
   }
   const newTm = [...new Set(d.t.map(t => String(t.team || (meta[t.teamId] || {}).name || '').trim()).filter(n => n && !teamByName(n)))];
   modal(`<h2>Importieren?</h2><ul>${d.t.slice(0, 12).map(t => `<li>${esc(t.title)}${t.date ? ` <span class="muted small">${fmtDate(t.date)}</span>` : ''}</li>`).join('')}${d.t.length > 12 ? `<li>… und ${d.t.length - 12} weitere</li>` : ''}</ul>
-    ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${newTm.length ? `<p class="small">Neue Mannschaft${newTm.length > 1 ? 'en' : ''} wird angelegt: ${newTm.map(n => '«' + esc(n) + '»').join(', ')}</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
+    ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${d.sp && Object.keys(d.sp).length ? `<p class="small">+ Zugang zu ${Object.keys(d.sp).length} Mannschaftsraum${Object.keys(d.sp).length === 1 ? '' : 'räumen'} (aus deiner Sicherung)</p>` : ''}${newTm.length ? `<p class="small">Neue Mannschaft${newTm.length > 1 ? 'en' : ''} wird angelegt: ${newTm.map(n => '«' + esc(n) + '»').join(', ')}</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
     <div class="row"><button class="btn pri" data-a="impOk">Importieren</button><button class="btn" data-a="close">Abbrechen</button></div>`);
 }
 function doImport() {
@@ -998,6 +1000,7 @@ function doImport() {
     if (isTeam && !shared) shared = tm;
   });
   if (d.s) for (const [id, cfg] of Object.entries(d.s)) if (teamById(id) && !DB.seasons[id] && cfg) DB.seasons[id] = JSON.parse(JSON.stringify(cfg));   // Datensicherung: Saison pro Mannschaft
+  spImport(d.sp);
   if (d.season && !DB.season.set) DB.season = JSON.parse(JSON.stringify(d.season));
   for (const t of d.t) {
     if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta);
@@ -1011,6 +1014,280 @@ function doImport() {
   toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
 }
 
+// ---------- Mannschaftsraum: Abgleich mit Co-Trainern ----------
+// Pro Mannschaft ein Raum auf dem Server (tools/supabase.sql). Der Inhalt wird auf dem Gerät mit AES-GCM verschlüsselt; der Schlüssel steht nur im Einladungslink (#j=Raum.Token.Schlüssel),
+// der Server sieht nur Chiffretext. Lokal: DB.spaces[teamId] = { id, t (eigenes Token), k (Schlüssel), role 'o'|'w'|'r', o/w/r (nur Besitzer: Token), ver, last, hash, del: { t: {trainingId: ms}, p: {playerId: ms} } }.
+// Raum-Inhalt (Klartext): { v: 1, team (mit players), trainings, season, custom, notes, del }. Zusammenführen: spMerge (rein lokal). Ohne SYNC_ON ist alles unsichtbar.
+const SP_BAD = 'Dieser Link ist ungültig oder wurde erneuert – bitte den Haupttrainer um einen neuen Link.';
+const SP_PRUNE = 400 * 864e5;   // Löschmarkierungen älter als rund 13 Monate verfallen
+const SP_RANK = { r: 1, w: 2, o: 3 };
+const SP_ROLE = { o: 'Besitzer', w: 'Co-Trainer', r: 'Nur lesen' };
+const spOf = id => (DB.spaces && DB.spaces[id]) || null;
+const spIds = () => SYNC_ON ? Object.keys(DB.spaces || {}).filter(id => teamById(id)) : [];
+const spClone = x => JSON.parse(JSON.stringify(x));
+const spSafe = k => typeof k === 'string' && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+const spById = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+const sj = v => v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? '[' + v.map(sj).join(',') + ']' : '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + sj(v[k])).join(',') + '}';
+const spRnd = n => crypto.getRandomValues(new Uint8Array(n));
+const spErrObj = (msg, extra) => Object.assign(new Error(msg), extra);
+
+// Verschlüsselung: 'e1.' + base64url(IV 12 Byte + Chiffretext), AES-GCM 256, neuer IV bei jedem Schreiben
+const spKeys = new Map();
+async function spKey(k) {
+  if (!spKeys.has(k)) { const raw = unb64u(String(k)); if (raw.length !== 32) throw spErrObj('Schlüssel ungültig', { bad: true }); spKeys.set(k, await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])); }
+  return spKeys.get(k);
+}
+async function spEnc(k, obj) {
+  const iv = spRnd(12), ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await spKey(k), new TextEncoder().encode(JSON.stringify(obj)))), all = new Uint8Array(12 + ct.length);
+  all.set(iv); all.set(ct, 12); return 'e1.' + b64u(all);
+}
+async function spDec(k, s) {
+  try {
+    if (typeof s !== 'string' || !s.startsWith('e1.')) throw 0;
+    const all = unb64u(s.slice(3)); if (all.length < 29) throw 0;
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: all.slice(0, 12) }, await spKey(k), all.slice(12))));
+  } catch (e) { throw spErrObj('Entschlüsseln fehlgeschlagen', { bad: true }); }
+}
+async function spHash(s) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+// Server (Supabase-RPC). Token und Schlüssel erscheinen nie in Meldungen.
+async function spRpc(fn, params) {
+  const r = await fetch(SYNCCFG.url + '/rest/v1/rpc/' + fn, { method: 'POST', headers: { apikey: SYNCCFG.key, Authorization: 'Bearer ' + SYNCCFG.key, 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+  let j = null; try { j = await r.json(); } catch (e) { /* ohne Antworttext */ }
+  if (!r.ok) throw spErrObj(String((j && j.message) || 'HTTP ' + r.status).slice(0, 160), { status: r.status });
+  return j;
+}
+function spErr(e) {
+  const m = e && e.message || '';
+  if (e && (e.bad || (e.status === 400 && m === 'kein zugriff'))) return { state: 'bad', msg: SP_BAD };
+  if (e instanceof TypeError) return { state: 'off', msg: 'Offline – wird abgeglichen, sobald Internet da ist' };
+  if (m === 'zu gross') return { state: 'err', msg: 'Fehler: Die Mannschaft ist für den Abgleich zu gross.' };
+  if (m === 'kein schreibrecht') return { state: 'err', msg: 'Fehler: Mit diesem Zugang darfst du nur lesen.' };
+  if (m === 'limit erreicht') return { state: 'err', msg: 'Fehler: Der Server hat sein Limit erreicht.' };
+  if (m === 'nur besitzer') return { state: 'err', msg: 'Fehler: Das darf nur der Haupttrainer.' };
+  return { state: 'err', msg: 'Fehler: ' + (m || 'unbekannt') };
+}
+
+// Inhalt eines Raums aus dem lokalen Stand (Klartext)
+const SP_SEASON = s => { if (!s || typeof s !== 'object') return null; const c = spClone(s); delete c.start; delete c.days; return c; };   // start/days werden lokal neu berechnet
+function spContent(tm, sp) {
+  const ts = teamTrainings(tm).map(t => ({ ...spClone(t), teamId: tm.id, team: tm.name })), c = [], n = {}, seen = new Set();
+  ts.forEach(t => t.items.forEach(it => { const cx = customOf(it); if (cx && !seen.has(cx.id)) { seen.add(cx.id); c.push(spClone(cx)); } for (const k of [it.lib, matNoteKey(it)]) if (k && DB.notes[k]) n[k] = spClone(DB.notes[k]); }));
+  const d = (sp && sp.del) || {};
+  return { v: 1, team: spClone(tm), trainings: ts, season: SP_SEASON(DB.seasons && DB.seasons[tm.id]), custom: c, notes: n, del: { t: { ...d.t }, p: { ...d.p } } };
+}
+function spNorm(c) {
+  const t = (c && c.team) || {}, d = (c && c.del) || {};
+  return { v: 1, team: { ...t, players: [...(Array.isArray(t.players) ? t.players : [])].sort(spById) }, trainings: [...(c.trainings || [])].sort(spById), season: SP_SEASON(c.season), custom: [...(c.custom || [])].sort(spById), notes: c.notes && typeof c.notes === 'object' ? c.notes : {}, del: { t: { ...d.t }, p: { ...d.p } } };
+}
+const spCanon = c => sj(spNorm(c));
+
+// Zusammenführen (rein lokal). rm = entschlüsselter Server-Inhalt oder null. Gibt zurück, ob sich der lokale Stand geändert hat.
+// Trainings, Spieler, Übungen, Merkzettel: der neuere Zeitstempel (updated bzw. u) gewinnt, bei Gleichstand der grössere kanonische Text (damit beide Seiten gleich entscheiden).
+// Gelöscht-Markierung (del) gewinnt gegen einen Eintrag mit kleinerem Zeitstempel. Mannschaftseinstellungen und Saison: grösseres tm.u gewinnt. Rolle «nur lesen»: der Server gewinnt immer.
+const spWins = (l, r, ul, ur) => ur !== ul ? ur > ul : sj(r) > sj(l);
+function spMerge(tm, sp, rm) {
+  const ro = sp.role === 'r', now = Date.now(), before = spCanon(spContent(tm, sp)), od = (rm && rm.del) || {}, del = { t: {}, p: {} };
+  for (const kind of ['t', 'p']) for (const src of [sp.del && sp.del[kind], od[kind]]) for (const [id, ms] of Object.entries(src || {})) { if (!spSafe(id) || !(+ms > 0) || +ms < now - SP_PRUNE) continue; del[kind][id] = Math.max(del[kind][id] || 0, +ms); }
+  sp.del = del;
+  if (rm) {
+    // Trainings
+    const seenT = new Set();
+    for (const r0 of Array.isArray(rm.trainings) ? rm.trainings : []) {
+      if (!r0 || !spSafe(r0.id) || !Array.isArray(r0.items)) continue; seenT.add(r0.id);
+      const r = { ...spClone(r0), teamId: tm.id, team: tm.name }, ur = +r.updated || 0;
+      if ((del.t[r.id] || 0) > ur) continue;
+      const l = getT(r.id), i = DB.trainings.indexOf(l);
+      if (!l) DB.trainings.push(r);
+      else if (ro) DB.trainings[i] = r;
+      else if ((teamOf(l) || {}).id !== tm.id) del.t[r.id] = Math.max(del.t[r.id] || 0, now);   // liegt hier in einer anderen Mannschaft: im Raum als verschoben markieren
+      else if (spWins({ ...l, teamId: tm.id, team: tm.name }, r, +l.updated || 0, ur)) DB.trainings[i] = r;
+    }
+    DB.trainings = DB.trainings.filter(l => (teamOf(l) || {}).id !== tm.id || ((ro ? seenT.has(l.id) : true) && (del.t[l.id] || 0) <= (+l.updated || 0)));
+    // Spieler
+    const rp = (rm.team && Array.isArray(rm.team.players)) ? rm.team.players : [];
+    if (ro) tm.players = rp.filter(p => p && spSafe(p.id)).map(p => cleanPlayer(p));
+    else {
+      const list = [...playersOf(tm)];
+      for (const r0 of rp) { if (!r0 || !spSafe(r0.id)) continue; const r = cleanPlayer(r0), i = list.findIndex(x => x.id === r.id); if (i < 0) list.push(r); else if (spWins(list[i], r, +list[i].u || 0, +r.u || 0)) list[i] = r; }
+      const had = Array.isArray(tm.players); tm.players = list.filter(p => (del.p[p.id] || 0) <= (+p.u || 0)); if (!had && !tm.players.length) delete tm.players;
+    }
+    // Mannschaftseinstellungen und Saison
+    const strip = t => { const c = spClone(t || {}); delete c.players; return c; }, lt = strip(tm), rs = strip(rm.team), lsea = SP_SEASON(DB.seasons && DB.seasons[tm.id]), rsea = SP_SEASON(rm.season);
+    if (rs.id === tm.id) {
+      const lu = +lt.u || 0, ru = +rs.u || 0, rw = ro || (ru !== lu ? ru > lu : (!!rsea !== !!lsea ? !!rsea : sj([rs, rsea]) > sj([lt, lsea])));
+      if (rw) {
+        const pl = tm.players; Object.keys(tm).forEach(k => delete tm[k]); Object.assign(tm, rs); if (pl) tm.players = pl;
+        if (!DB.seasons) DB.seasons = {};
+        if (rsea) DB.seasons[tm.id] = rsea; else if (ro) delete DB.seasons[tm.id];
+      }
+    }
+    // Eigene Übungen und Merkzettel: vereinigen (bei gleichem Eintrag der neuere)
+    for (const c of Array.isArray(rm.custom) ? rm.custom : []) { if (!c || !spSafe(c.id)) continue; const i = DB.custom.findIndex(x => x.id === c.id); if (i < 0) DB.custom.push(spClone(c)); else if (ro || spWins(DB.custom[i], c, +DB.custom[i].u || 0, +c.u || 0)) DB.custom[i] = spClone(c); }
+    for (const [k, v] of Object.entries(rm.notes && typeof rm.notes === 'object' ? rm.notes : {})) { if (!spSafe(k) || !v || typeof v !== 'object') continue; const l = DB.notes[k]; if (!l || ro || spWins(l, v, +l.u || 0, +v.u || 0)) DB.notes[k] = spClone(v); }
+  }
+  DB.trainings.forEach(t => { if (t.teamId === tm.id) t.team = tm.name; });
+  LIB = null;
+  return before !== spCanon(spContent(tm, sp));
+}
+
+// Ablauf: Server lesen, entschlüsseln, zusammenführen, bei Unterschied hochladen (Versionskonflikt: neu lesen, bis zu 3 Versuche). Immer nur ein Vorgang gleichzeitig (spLock).
+const spLock = fn => { const p = SP.chain.then(fn); SP.chain = p.catch(() => { }); return p; };
+function spSync(id) {
+  if (SP.pend.has(id)) return SP.pend.get(id);
+  const p = spLock(() => { SP.pend.delete(id); return spSyncInner(id); }); SP.pend.set(id, p); return p;
+}
+async function spSyncInner(id) {
+  const sp = spOf(id), tm = teamById(id); if (!sp || !tm) return false;
+  const set = (state, msg, changed) => { SP.st[id] = { state, msg }; spPaint(); if (changed) spRender(); };
+  if (!navigator.onLine) { const e = spErr(new TypeError()); set(e.state, e.msg); return false; }
+  try {
+    for (let n = 0; n < 3; n++) {
+      const row = (await spRpc('space_get', { p_id: sp.id, p_t: sp.t }))[0]; if (!row) throw spErrObj('kein zugriff', { status: 400 });
+      sp.role = row.role;
+      const h0 = await spHash(spCanon(spContent(tm, sp)));
+      if (n === 0 && row.ver === sp.ver && h0 === sp.hash) { sp.last = new Date().toISOString(); flush(); set('ok'); return true; }   // nichts Neues auf beiden Seiten
+      const rm = row.data ? await spDec(sp.k, row.data) : null;
+      if (rm && (rm.v !== 1 || !rm.team || rm.team.id !== tm.id)) throw spErrObj('Dieser Raum passt nicht zu dieser Mannschaft oder braucht eine neuere App.');
+      const changed = spMerge(tm, sp, rm), mine = spContent(tm, sp), canon = spCanon(mine);
+      if (changed) flush();
+      if (sp.role === 'r' || (rm && canon === spCanon(rm))) { sp.ver = row.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
+      const put = (await spRpc('space_put', { p_id: sp.id, p_t: sp.t, p_data: await spEnc(sp.k, mine), p_ver: row.ver }))[0];
+      if (put && put.ok) { sp.ver = put.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
+    }
+    throw spErrObj('Gleichzeitige Änderungen – bitte später nochmals abgleichen');
+  } catch (e) { const x = spErr(e); set(x.state, x.msg); return false; }
+}
+function spAuto() { if (!SYNC_ON) return; for (const id of spIds()) if (!(SP.st[id] && SP.st[id].state === 'bad')) spSync(id); }
+function spDirty() { if (!SYNC_ON || !DB.spaces || !Object.keys(DB.spaces).length) return; clearTimeout(SP.t); SP.t = setTimeout(spAuto, 3000); }
+function spRender() {   // nach einem Abgleich mit neuen Daten die Ansicht auffrischen – aber nicht mitten in einer Eingabe und nicht im Hallenmodus
+  const a = document.activeElement;
+  if (location.hash.endsWith('/run') || (a && a.closest && a.closest('#app') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
+  render();
+}
+function spStatus(id) {
+  const sp = spOf(id), st = SP.st[id] || {};
+  const ago = () => { const m = Math.max(0, Math.round((Date.now() - Date.parse(sp.last)) / 6e4)); return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : m < 1440 ? `vor ${Math.round(m / 60)} Std.` : `vor ${Math.round(m / 1440)} Tg.`; };
+  if (st.state === 'run') return 'Gleicht ab …';
+  if (st.state === 'bad') return 'Link ungültig oder erneuert – bitte den Haupttrainer um einen neuen Link.';
+  if (st.state === 'off' || st.state === 'err') return st.msg + (sp.last ? ` (zuletzt abgeglichen ${ago()})` : '');
+  return sp.last ? 'Abgeglichen ' + ago() : 'Noch nicht abgeglichen';
+}
+function spPaint() { document.querySelectorAll('[data-spst]').forEach(el => { if (spOf(el.dataset.spst)) el.textContent = spStatus(el.dataset.spst); }); }
+
+// Löschmarkierung (für abgeglichene Mannschaften): kind 't' Training, 'p' Spieler; undo = wieder entfernen
+function spDel(kind, tmId, ids, undo) {
+  const sp = SYNC_ON && tmId && spOf(tmId); if (!sp || sp.role === 'r') return;
+  sp.del = sp.del || { t: {}, p: {} }; const d = sp.del[kind] = sp.del[kind] || {};
+  for (const id of [].concat(ids)) { if (undo) delete d[id]; else d[id] = Date.now(); }
+}
+
+// Mannschaft nur lesen? (Ansicht der Mannschaft, des Trainings oder der Saison)
+function roTeam() {
+  if (!SYNC_ON || !DB.spaces) return null;
+  const p = location.hash.slice(1).split('/').filter(Boolean).map(decodeURIComponent); let tm = null;
+  if (p[0] === 't' && !['run', 'view'].includes(p[2])) { const t = getT(p[1]); tm = t && teamOf(t); }
+  else if (p[0] === 'team' && p[1] && p[1] !== 'new') tm = teamById(p[1]);
+  else if (p[0] === 'season') tm = teamById(S.sTeam);
+  const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
+}
+const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow']);
+function roApply() {
+  const tm = roTeam(); if (!tm) return;
+  const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
+  const h = $('#app header.top'), html = '<div class="card rotop">🔒 Nur lesen – Änderungen macht der Haupttrainer</div>';
+  if (h) h.insertAdjacentHTML('afterend', html); else app.insertAdjacentHTML('afterbegin', html);
+}
+
+// Oberfläche: Karte auf der Mannschaftsseite
+function spCard(tm) {
+  if (!SYNC_ON) return '';
+  const sp = spOf(tm.id), id = esc(tm.id);
+  if (!sp) return `<div class="card spcard"><b>🔄 Mit Co-Trainern abgleichen</b><p class="small">Alle, die deinen Einladungslink haben, sehen dieselben Daten dieser Mannschaft – auch wenn jemand etwas ändert. Die Daten liegen verschlüsselt auf einem Server, der Server sieht keine Namen. Spielerliste und Anwesenheit gehen mit.</p><button class="btn pri" data-a="spSetup" data-k="${id}">Mannschaftsraum einrichten</button></div>`;
+  const o = sp.role === 'o';
+  return `<div class="card spcard"><div class="row"><b>🔄 Abgleich mit Co-Trainern</b><span class="chip">${esc(SP_ROLE[sp.role] || '')}</span></div><div class="small" data-spst="${id}">${esc(spStatus(tm.id))}</div>
+    <div class="row wrap"><button class="btn" data-a="spNow" data-k="${id}">Jetzt abgleichen</button>${o ? `<button class="btn" data-a="spInvite" data-k="${id}" data-r="w">Co-Trainer einladen</button><button class="btn" data-a="spInvite" data-k="${id}" data-r="r">Nur-Lesen-Link</button>` : `<button class="btn" data-a="spLeave" data-k="${id}">Abgleich beenden</button>`}</div>
+    ${o ? `<div class="row wrap"><button class="btn" data-a="spRenew" data-k="${id}">Zugang erneuern</button><button class="btn danger" data-a="spDissolve" data-k="${id}">Raum auflösen</button></div>` : ''}</div>`;
+}
+const spLink = (sp, kind) => appUrl() + '#j=' + [sp.id, sp[kind], sp.k].join('.');
+function spInviteModal(id, kind, renewed) {
+  const tm = teamById(id), sp = spOf(id), url = spLink(sp, kind), w = kind === 'w';
+  S.share = { url, t: { title: tm.name }, data: null, file: '', text: 'Unihockey-Trainingsplaner, Mannschaftsraum: ' + tm.name };
+  modal(`<h2>${w ? 'Co-Trainer einladen' : 'Nur-Lesen-Link'}</h2>
+    <p class="small">${w ? `Wer diesen Link öffnet, sieht und ändert die Daten von «${esc(tm.name)}» – wie du.` : `Wer diesen Link öffnet, sieht die Daten von «${esc(tm.name)}», kann sie aber nicht ändern.`}</p>
+    <div class="warnbox"><b>Wichtig:</b> Der Link ist ein Schlüssel zur Mannschaft, mit Namen von Kindern. Schicke ihn nur einzeln an die Co-Trainer, nicht in Gruppenchats und nicht öffentlich.</div>
+    ${renewed ? '<div class="warnbox"><b>Zugang erneuert.</b> Alle bisherigen Links funktionieren nicht mehr. Schicke jetzt allen den neuen Link, auch den Nur-Lesen-Link.</div>' : ''}
+    <div class="qr">${qrSvg(url, 'Für einen QR-Code ist der Link zu lang – nutze «Link kopieren».')}</div>
+    <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="spInvite" data-k="${esc(id)}" data-r="${w ? 'r' : 'w'}">${w ? 'Nur-Lesen-Link' : 'Co-Trainer-Link'}</button><button class="btn" data-a="close">Schliessen</button></div>`);
+}
+function spInfoModal(title, text) { modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="row"><button class="btn pri" data-a="close">Schliessen</button></div>`); }
+
+// Raum einrichten / Beitreten / Zugang erneuern
+function spSetup(id) {
+  const tm = teamById(id); if (!tm || spOf(id)) return Promise.resolve(false);
+  return spLock(async () => {
+    const sp = { id: b64u(spRnd(16)), t: '', k: b64u(spRnd(32)), role: 'o', o: b64u(spRnd(24)), w: b64u(spRnd(24)), r: b64u(spRnd(24)), ver: 1, last: '', hash: '', del: { t: {}, p: {} } };
+    sp.t = sp.o; const c = spContent(tm, sp);
+    await spRpc('space_create', { p_id: sp.id, p_o: sp.o, p_w: sp.w, p_r: sp.r, p_data: await spEnc(sp.k, c) });
+    sp.hash = await spHash(spCanon(c)); sp.last = new Date().toISOString(); if (!DB.spaces) DB.spaces = {}; DB.spaces[id] = sp; SP.st[id] = { state: 'ok' }; flush(); return true;
+  });
+}
+async function spJoinOpen(v) {
+  if (!SYNC_ON) return spInfoModal('Mannschaftsraum beitreten', 'Abgleich ist in dieser App noch nicht eingerichtet.');
+  const [id, t, k] = String(v).split('.');
+  if (!id || !t || !k || !/^[\w-]+$/.test(id + t + k)) return spInfoModal('Mannschaftsraum beitreten', SP_BAD);
+  try {
+    const row = (await spRpc('space_get', { p_id: id, p_t: t }))[0]; if (!row) throw spErrObj('kein zugriff', { status: 400 });
+    const rm = await spDec(k, row.data);
+    if (!rm || rm.v !== 1 || !rm.team || !spSafe(rm.team.id) || !rm.team.name) throw spErrObj('Raum unlesbar', { bad: true });
+    const ex = spOf(rm.team.id), tm = teamById(rm.team.id), nT = (rm.trainings || []).length, nP = (rm.team.players || []).length;
+    S.join = { id, t, k, role: row.role, rm };
+    let note = '', can = true;
+    if (ex && ex.id !== id) { note = 'Diese Mannschaft ist auf diesem Gerät schon mit einem anderen Raum verbunden. Beende dort zuerst den Abgleich.'; can = false; }
+    else if (ex && SP_RANK[ex.role] > SP_RANK[row.role]) { note = ex.role === 'o' ? 'Das ist dein eigener Raum – du musst nicht beitreten.' : 'Du hast schon einen Zugang mit mehr Rechten.'; can = false; }
+    else if (tm) note = row.role === 'r' ? 'Diese Mannschaft hast du schon. Deine Fassung wird durch den Stand des Haupttrainers ersetzt.' : 'Diese Mannschaft hast du schon. Die Daten werden zusammengeführt.';
+    modal(`<h2>Mannschaftsraum beitreten</h2><p><b>${esc(rm.team.name)}</b> <span class="muted small">${esc((stageById(rm.team.stage) || {}).name || '')}</span></p>
+      <ul class="small"><li>Deine Rolle: <b>${esc(SP_ROLE[row.role] || '')}</b>${row.role === 'r' ? ' (Änderungen sind gesperrt)' : ''}</li><li>${nT} Training${nT === 1 ? '' : 's'}, ${nP} Person${nP === 1 ? '' : 'en'} in der Spielerliste</li></ul>
+      ${note ? `<p class="small ${can ? '' : 'warn'}">${esc(note)}</p>` : ''}<p class="small muted">Die Daten werden auf diesem Gerät gespeichert und bei Änderungen automatisch abgeglichen.</p>
+      <div class="row wrap">${can ? '<button class="btn pri" data-a="spJoinOk">Beitreten</button>' : ''}<button class="btn" data-a="close">${can ? 'Abbrechen' : 'Schliessen'}</button></div>`);
+  } catch (e) { const x = spErr(e); spInfoModal('Mannschaftsraum beitreten', x.state === 'off' ? 'Keine Verbindung zum Server. Öffne den Link nochmals, wenn du Internet hast.' : x.msg); }
+}
+async function spJoinDo() {
+  const j = S.join; S.join = null; closeModal(); if (!j) return;
+  const tid = j.rm.team.id, ex = spOf(tid); let created = null;
+  await spLock(async () => {
+    let tm = teamById(tid);
+    if (!tm) { tm = created = { id: tid, name: '', stage: j.rm.team.stage || DB.stage, color: j.rm.team.color || TEAM_COLORS[0], ort: '', sessions: [], u: -1 }; DB.teams.push(tm); }
+    if (!DB.spaces) DB.spaces = {};
+    DB.spaces[tid] = { id: j.id, t: j.t, k: j.k, role: j.role, ver: 0, last: '', hash: '', del: ex && ex.id === j.id && ex.del ? ex.del : { t: {}, p: {} } };
+    if (j.role === 'o') DB.spaces[tid].o = j.t;
+    const ok = await spSyncInner(tid);
+    if (!ok && created) { DB.teams = DB.teams.filter(x => x !== created); delete DB.spaces[tid]; flush(); }
+    else if (!ok && ex) { DB.spaces[tid] = ex; flush(); }
+  });
+  if (teamById(tid) && spOf(tid)) { toast('Mannschaftsraum beigetreten'); go('/team/' + tid); } else toast('Beitritt fehlgeschlagen – bitte später nochmals versuchen');
+}
+function spRenewDo(id) {
+  return spLock(async () => {
+    const sp = spOf(id), tm = teamById(id); if (!sp || sp.role !== 'o') return false;
+    if (!(await spSyncInner(id))) return false;
+    const nk = b64u(spRnd(32)), nw = b64u(spRnd(24)), nr = b64u(spRnd(24)), c = spContent(tm, sp);
+    const ver = await spRpc('space_rekey', { p_id: sp.id, p_o: sp.o, p_w: nw, p_r: nr, p_data: await spEnc(nk, c) });
+    Object.assign(sp, { k: nk, w: nw, r: nr, ver: +ver, hash: await spHash(spCanon(c)), last: new Date().toISOString() }); SP.st[id] = { state: 'ok' }; flush(); return true;
+  });
+}
+const spU = id => { const tm = teamById(id); if (tm) tm.u = Date.now(); };   // Mannschaftseinstellung/Saison geändert (Zeitstempel fürs Zusammenführen)
+const SPID = /^[\w-]{16,}$/;
+function spImport(sp) {   // Datensicherung: Zugänge zu Mannschaftsräumen wiederherstellen (nur für vorhandene Mannschaften ohne eigenen Zugang)
+  for (const [id, v] of Object.entries(sp && typeof sp === 'object' ? sp : {})) {
+    if (!spSafe(id) || !teamById(id) || spOf(id) || !v || !SPID.test(v.id) || !SPID.test(v.t) || !SPID.test(v.k) || !SP_RANK[v.role]) continue;
+    const e = { id: v.id, t: v.t, k: v.k, role: v.role, ver: 0, last: '', hash: '', del: { t: {}, p: {} } };
+    for (const x of ['o', 'w', 'r']) if (SPID.test(v[x])) e[x] = v[x];
+    for (const kind of ['t', 'p']) for (const [i, ms] of Object.entries((v.del || {})[kind] || {})) if (spSafe(i) && +ms > 0) e.del[kind][i] = +ms;
+    if (!DB.spaces) DB.spaces = {}; DB.spaces[id] = e;
+  }
+}
+
 // ---------- Router ----------
 const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Stufe und – passend zum Wochentag des Datums – Startzeit, Dauer und Ort werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
   <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
@@ -1020,6 +1297,7 @@ const NAV = [['/', 'Trainings', '📋'], ['/teams', 'Teams', '👥'], ['/lib', '
 function render() {
   const h = location.hash.slice(1) || '/';
   if (h.startsWith('i=')) { unpack(h.slice(2)).then(importData).catch(() => toast('Link konnte nicht gelesen werden')); history.replaceState(null, '', location.pathname + '#/'); return render(); }
+  if (h.startsWith('j=')) { const jv = h.slice(2); history.replaceState(null, '', location.pathname + location.search + '#/'); spJoinOpen(jv); return render(); }
   const p = h.split('/').filter(Boolean).map(decodeURIComponent);
   let html = '', tab = '/' + (p[0] || ''), run = false;
   if (S.flow && !(S.flow.k === 'rtp' && ['rtp', 'new'].includes(p[0])) && !(S.flow.k === 'season' && ['season', 'new'].includes(p[0]))) S.flow = null;
@@ -1052,7 +1330,7 @@ function render() {
   if (tab === '/team') tab = '/teams';
   if (!run && S.run) { S.run = null; runKeep(); wakeLock(false); }
   document.body.classList.toggle('running', run);
-  $('#app').innerHTML = html;
+  $('#app').innerHTML = html; roApply();
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
   if (render.last !== h.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
   render.last = h.split('/').slice(0, 3).join('/');
@@ -1084,19 +1362,20 @@ const A = {
     const vals = { name, stage: f.stage, color: f.color, ort: f.ort.trim(), sessions: f.sessions.map(x => ({ id: x.id, wd: +x.wd, time: x.time || '', min: +x.min || 0, ort: String(x.ort || '').trim() })) }; let tm;
     if (f.id) { tm = teamById(f.id); const mine = teamTrainings(tm); Object.assign(tm, vals); mine.forEach(t => setTeam(t, tm)); }
     else { tm = { id: uid(), ...vals }; DB.teams.push(tm); }
-    mirrorLegacy(tm);
+    mirrorLegacy(tm); tm.u = Date.now();
     S.mf = null; save(); done(f.id ? `Mannschaft «${name}» gespeichert.` : `Mannschaft «${name}» angelegt – plane jetzt das erste Training.`, `/team/${tm.id}`);
   },
   delTeam(el) {
     const tm = teamById(el.dataset.id), n = teamTrainings(tm).length;
-    modal(`<h2>«${esc(tm.name)}» löschen?</h2><p>${n ? `Die Mannschaft hat ${n} Training${n > 1 ? 's' : ''}. Was soll damit geschehen?` : 'Die Mannschaft hat keine Trainings.'}</p><div class="col"><button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="keep">Nur die Mannschaft löschen${n ? ' – Trainings bleiben, ohne Mannschaft' : ''}</button>${n ? `<button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="all">Mannschaft und ${n} Training${n > 1 ? 's' : ''} löschen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div><p class="small muted">Direkt danach kannst du es noch rückgängig machen.</p>`);
+    modal(`<h2>«${esc(tm.name)}» löschen?</h2><p>${n ? `Die Mannschaft hat ${n} Training${n > 1 ? 's' : ''}. Was soll damit geschehen?` : 'Die Mannschaft hat keine Trainings.'}</p>${spOf(tm.id) ? '<p class="small warn">Diese Mannschaft ist mit einem Mannschaftsraum verbunden. Auf diesem Gerät endet der Abgleich' + (spOf(tm.id).role === 'o' ? '; den Raum auf dem Server löschst du vorher mit «Raum auflösen».' : '.') + '</p>' : ''}<div class="col"><button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="keep">Nur die Mannschaft löschen${n ? ' – Trainings bleiben, ohne Mannschaft' : ''}</button>${n ? `<button class="btn danger" data-a="delTeamDo" data-id="${tm.id}" data-m="all">Mannschaft und ${n} Training${n > 1 ? 's' : ''} löschen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div><p class="small muted">Direkt danach kannst du es noch rückgängig machen.</p>`);
   },
   delTeamDo(el) {
     closeModal(); const tm = teamById(el.dataset.id), mine = teamTrainings(tm), prev = mine.map(t => [t, t.team, t.teamId]), cfg = DB.seasons[tm.id], idx = DB.teams.indexOf(tm), all = el.dataset.m === 'all';
+    const spx = spOf(tm.id); if (spx) delete DB.spaces[tm.id];
     DB.teams.splice(idx, 1); delete DB.seasons[tm.id];
     if (all) { const ids = new Set(mine.map(t => t.id)); DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); } else mine.forEach(t => setTeam(t, null));
     if (S.team === tm.id) S.team = ''; if (S.sTeam === tm.id) S.sTeam = ''; save(); go('/teams');
-    toast(all ? `«${tm.name}» und ${mine.length} Trainings gelöscht` : `«${tm.name}» gelöscht – ${mine.length} Trainings bleiben ohne Mannschaft`, 'Rückgängig', () => { DB.teams.splice(idx, 0, tm); if (cfg) DB.seasons[tm.id] = cfg; if (all) DB.trainings.push(...mine); else prev.forEach(([t, tn, ti]) => { t.team = tn; t.teamId = ti; }); save(); render(); });
+    toast(all ? `«${tm.name}» und ${mine.length} Trainings gelöscht` : `«${tm.name}» gelöscht – ${mine.length} Trainings bleiben ohne Mannschaft`, 'Rückgängig', () => { DB.teams.splice(idx, 0, tm); if (cfg) DB.seasons[tm.id] = cfg; if (spx) DB.spaces[tm.id] = spx; if (all) DB.trainings.push(...mine); else prev.forEach(([t, tn, ti]) => { t.team = tn; t.teamId = ti; }); save(); render(); });
   },
   pickCancel() { const id = S.pick; S.pick = null; go(id && getT(id) ? `/t/${id}` : '/'); },
   doneX() { S.done = null; render(); },
@@ -1124,7 +1403,7 @@ const A = {
   },
   grpDel(el) { closeModal(); removeTrainings(DB.trainings.filter(t => grpKey(t) === el.dataset.k)); render(); },
   grpSel(el) { closeModal(); S.sel = new Set(DB.trainings.filter(t => grpKey(t) === el.dataset.k).map(t => t.id)); render(); },
-  grpShift(el) { closeModal(); DB.trainings.forEach(t => { if (grpKey(t) === el.dataset.k && t.date) t.date = iso(addDays(pd(t.date), +el.dataset.d)); }); save(); toast('Verschoben'); render(); },
+  grpShift(el) { closeModal(); DB.trainings.forEach(t => { if (grpKey(t) === el.dataset.k && t.date) { t.date = iso(addDays(pd(t.date), +el.dataset.d)); t.updated = Date.now(); } }); save(); toast('Verschoben'); render(); },
   blockAll(el) {
     const st = stageById(el.dataset.s), b = st.blocks.find(x => x.nr === +el.dataset.b2); let n = 0;
     if (st.slots) b.weeks.forEach(w => w.trainings.forEach((_, i) => { trainingFromRtp(st.id, b.nr, w.w, i); n++; })); else for (let i = 0; i < 12; i++, n++) trainingFromRtp(st.id, b.nr, 0, i);
@@ -1143,6 +1422,7 @@ const A = {
   },
   doneUndo() {
     const ids = new Set((S.done && S.done.undo) || []), n = DB.trainings.filter(t => ids.has(t.id)).length;
+    DB.trainings.filter(t => ids.has(t.id)).forEach(t => spDel('t', (teamOf(t) || {}).id, t.id));
     DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); S.done = null; save(); toast(`${n} Trainings zurückgenommen`); render();
   },
   toPlayers(el) { S.tsec.add('pl'); closeModal(); go('/team/' + el.dataset.k); },
@@ -1157,22 +1437,22 @@ const A = {
   plSave() {
     const f = S.pf, tm = teamById(f.tm); if (!tm) return;
     if (!String(f.first).trim() && !String(f.last).trim()) return toast('Bitte einen Namen eingeben');
-    const p = cleanPlayer(f); tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
+    const p = cleanPlayer({ ...f, u: Date.now() }); tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
     if (i >= 0) tm.players[i] = p; else tm.players.push(p);
     S.tsec.add('pl'); save(); closeModal(); render(); toast('Gespeichert');
   },
   plDel() {
     const f = S.pf, tm = teamById(f.tm), i = playersOf(tm).findIndex(x => x.id === f.id); if (i < 0) return;
-    const p = tm.players.splice(i, 1)[0]; save(); closeModal(); render();
-    toast(`«${pName(p)}» entfernt`, 'Rückgängig', () => { tm.players.splice(Math.min(i, tm.players.length), 0, p); save(); render(); });
+    const p = tm.players.splice(i, 1)[0]; spDel('p', tm.id, p.id); save(); closeModal(); render();
+    toast(`«${pName(p)}» entfernt`, 'Rückgängig', () => { p.u = Date.now(); spDel('p', tm.id, p.id, true); tm.players.splice(Math.min(i, tm.players.length), 0, p); save(); render(); });
   },
   plBulk(el) { S.pb = { tm: el.dataset.tm, text: '', leader: false, prev: null }; bulkModal(); },
   pbPrev() { const b = S.pb, tm = teamById(b.tm); b.prev = parsePlayers(b.text).map(p => ({ ...p, dup: isDupPlayer(tm, p) })); bulkModal(); },
   pbAdd() {
     const b = S.pb, tm = teamById(b.tm), list = parsePlayers(b.text).filter(p => !isDupPlayer(tm, p)); if (!list.length) return toast('Nichts Neues zum Hinzufügen');
-    tm.players = playersOf(tm); const added = list.map(p => cleanPlayer({ ...p, role: b.leader ? 'L' : 'T' })); tm.players.push(...added);
+    tm.players = playersOf(tm); const added = list.map(p => cleanPlayer({ ...p, role: b.leader ? 'L' : 'T', u: Date.now() })); tm.players.push(...added);
     S.tsec.add('pl'); S.pb = null; save(); closeModal(); render();
-    toast(`${added.length} Person${added.length === 1 ? '' : 'en'} hinzugefügt`, 'Rückgängig', () => { const ids = new Set(added.map(p => p.id)); tm.players = tm.players.filter(p => !ids.has(p.id)); save(); render(); });
+    toast(`${added.length} Person${added.length === 1 ? '' : 'en'} hinzugefügt`, 'Rückgängig', () => { const ids = new Set(added.map(p => p.id)); tm.players = tm.players.filter(p => !ids.has(p.id)); ids.forEach(x => spDel('p', tm.id, x)); save(); render(); });
   },
   awExport(el) { jsModal(teamById(el.dataset.tm), el.dataset.k); },
   awDownload() { const r = S.jsx; if (!r || !r.rows) return; saveBlob(r.name, new Blob([r.text], { type: 'text/csv;charset=utf-8' })); toast('Datei heruntergeladen'); },
@@ -1183,11 +1463,40 @@ const A = {
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
   shFile() { download(S.share.file, S.share.data); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
-  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams, s: DB.seasons, season: DB.season }); },
+  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams, s: DB.seasons, season: DB.season, ...(DB.spaces && Object.keys(DB.spaces).length ? { sp: DB.spaces } : {}) }); },
   impFile() { $('#file').click(); },
   impOk: doImport,
+  spSetup(el) {
+    const id = el.dataset.k; el.disabled = true; toast('Raum wird eingerichtet …');
+    spSetup(id).then(ok => { render(); if (ok) spInviteModal(id, 'w'); }).catch(e => { el.disabled = false; const x = spErr(e); toast(x.state === 'off' ? 'Keine Verbindung zum Server – bitte mit Internet nochmals versuchen.' : x.msg); });
+  },
+  spNow(el) { const id = el.dataset.k; SP.st[id] = { state: 'run' }; spPaint(); spSync(id); },
+  spInvite(el) { spInviteModal(el.dataset.k, el.dataset.r === 'r' ? 'r' : 'w'); },
+  spJoinOk: spJoinDo,
+  spRenew(el) {
+    const id = el.dataset.k;
+    modal(`<h2>Zugang erneuern?</h2><p>Es gibt dann einen neuen Schlüssel und neue Links. <b>Alle bisherigen Links – auch deine bereits verschickten – funktionieren nicht mehr.</b> Wer weiter abgleichen soll, braucht den neuen Link von dir.</p><p class="small muted">Nutze das, wenn jemand nicht mehr dabei sein soll oder ein Link in falsche Hände geraten ist.</p><div class="col"><button class="btn danger" data-a="spRenewOk" data-k="${esc(id)}">Zugang erneuern</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  spRenewOk(el) {
+    const id = el.dataset.k; el.disabled = true;
+    spRenewDo(id).then(ok => { render(); if (ok) spInviteModal(id, 'w', true); else { closeModal(); toast((SP.st[id] && SP.st[id].msg) || 'Zugang konnte nicht erneuert werden'); } }).catch(e => { closeModal(); toast(spErr(e).msg); });
+  },
+  spDissolve(el) {
+    const id = el.dataset.k, tm = teamById(id);
+    modal(`<h2>Raum auflösen?</h2><p>Der Raum von «${esc(tm.name)}» wird auf dem Server gelöscht. Deine Daten und die Kopien der Co-Trainer bleiben auf den Geräten erhalten, gleichen sich aber nicht mehr ab. Das lässt sich nicht rückgängig machen.</p><div class="col"><button class="btn danger" data-a="spDissolveOk" data-k="${esc(id)}">Raum auflösen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  spDissolveOk(el) {
+    const id = el.dataset.k, sp = spOf(id); el.disabled = true;
+    spLock(async () => { try { await spRpc('space_delete', { p_id: sp.id, p_o: sp.o }); } catch (e) { if (!(e.status === 400 && e.message === 'kein zugriff')) throw e; } delete DB.spaces[id]; flush(); })
+      .then(() => { closeModal(); render(); toast('Raum aufgelöst – deine Daten bleiben'); }).catch(e => { closeModal(); toast(spErr(e).msg); });
+  },
+  spLeave(el) {
+    const id = el.dataset.k, tm = teamById(id);
+    modal(`<h2>Abgleich beenden?</h2><p>«${esc(tm.name)}» bleibt als Kopie auf diesem Gerät, gleicht sich aber nicht mehr mit den anderen ab. Mit dem Einladungslink kannst du später wieder beitreten.</p><div class="col"><button class="btn danger" data-a="spLeaveOk" data-k="${esc(id)}">Abgleich beenden</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  spLeaveOk(el) { delete DB.spaces[el.dataset.k]; flush(); closeModal(); render(); toast('Abgleich beendet – die Kopie bleibt'); },
   install() { installEvt && installEvt.prompt(); installEvt = null; },
-  wipe() { if (confirm('Wirklich ALLE Trainings, eigenen Übungen und Notizen auf diesem Gerät löschen?')) { DB = EMPTY(); LIB = null; flush(); render(); } },
+  wipe() { if (confirm('Wirklich ALLE Trainings, eigenen Übungen und Notizen auf diesem Gerät löschen?' + (DB.spaces && Object.keys(DB.spaces).length ? ' Auch die Zugänge zu deinen Mannschaftsräumen gehen verloren.' : ''))) { DB = EMPTY(); LIB = null; flush(); render(); } },
   libKind(el) { S.lib.kind = el.dataset.k; S.lib.sp = ''; S.lib.limit = 60; render(); },
   libMore() { S.lib.limit += 100; $('#liblist').innerHTML = libList(); },
   utp(el) { navigator.clipboard && navigator.clipboard.writeText(el.dataset.n).then(() => toast('Name kopiert'), () => { }); open('https://utp.swissunihockey.ch', '_blank', 'noopener'); },
@@ -1199,13 +1508,13 @@ const A = {
     modal(`<h2>Zu welchem Training?</h2><div class="col">${ts.map(t => `<button class="btn" data-a="addLib" data-k="${esc(e.key)}" data-t="${t.id}">${esc(t.title)}${t.date ? ' · ' + fmtDate(t.date) : ''}</button>`).join('')}<button class="btn pri" data-a="addLib" data-k="${esc(e.key)}" data-t="new">+ Neues Training</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   },
   cStage(el) { const f = S.form, k = el.dataset.k; f.stages = f.stages.includes(k) ? f.stages.filter(x => x !== k) : [...f.stages, k]; el.classList.toggle('sel'); },
-  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) { const c = DB.custom.find(x => x.id === f.id); Object.assign(c, f); syncCustom(c); } else { f.id = uid(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
+  saveC() { const f = S.form; if (!f.name.trim()) return toast('Bitte einen Namen eingeben'); f.min = +f.min || 10; if (f.id) { const c = DB.custom.find(x => x.id === f.id); Object.assign(c, f); syncCustom(c); } else { f.id = uid(); f.u = Date.now(); DB.custom.push(f); } LIB = null; save(); toast('Gespeichert'); go(`/lib/x/${encodeURIComponent('c:' + f.id)}`); },
   delC(el) { if (!confirm('Eigene Übung löschen?')) return; DB.custom = DB.custom.filter(x => x.id !== el.dataset.id); LIB = null; save(); go('/lib'); },
   stage(el) { DB.stage = el.dataset.k; save(); render(); },
   fromRtp(el) { const d = el.dataset, t = trainingFromRtp(d.s, +d.b2, +d.w, +d.i, d.d); applyFlow(t); S.flow = null; done(`Training erstellt aus ${d.s} · Block ${d.b2}${+d.w ? ' · Woche ' + d.w : ''} – ${t.items.length} Blöcke${t.team ? ' · ' + t.team : ''}. Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sNew(el) { const d = el.dataset, st = stageById(d.s), b = st.blocks.find(x => x.nr === +d.b2), tm = teamById(S.sTeam), sess = planSessions(seasonCfg(), tm).find(x => x.id === d.x), t = seasonCreate(st, b, b.weeks.find(x => x.w === +d.w), +d.i, d.d, sess, tm); applyFlow(t); S.flow = null; done(`Training für ${fmtDate(d.d)} erstellt (${st.id} · Block ${b.nr}). Jetzt kannst du es anpassen.`, `/t/${t.id}`); },
   sDay(el) { const s = seasonCfg(), k = +el.dataset.k; s.days = s.days.includes(k) ? s.days.filter(x => x !== k) : [...s.days, k]; s.set = 1; save(); render(); },
-  sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; save(); render(); },
+  sHol(el) { const s = seasonCfg(), k = el.dataset.k; s.hol = s.hol.includes(k) ? s.hol.filter(x => x !== k) : [...s.hol, k]; s.set = 1; spU(S.sTeam); save(); render(); },
   runTog() { const r = S.run; r.started = true; r.on = !r.on; r.last = Date.now(); wakeLock(r.on); runKeep(); render(); },
   runReset() { runSet(curT(), S.run.i); render(); },
   runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); runKeep(); render(); scrollTo(0, 0); },
@@ -1215,28 +1524,30 @@ document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;
+  if (RO_A.has(el.dataset.a) && roTeam()) { ev.preventDefault(); toast('Nur lesen – Änderungen macht der Haupttrainer'); return; }
   if (el.tagName !== 'A') ev.preventDefault();
   fn(el, ev);
 });
 function onInput(ev) {
   const el = ev.target.closest('[data-b]'); if (!el) return;
+  if (!/^(aw|l|f|tsh):/.test(el.dataset.b) && roTeam()) return;
   const [k, a, b] = el.dataset.b.split(':'), v = el.type === 'number' ? (el.value === '' ? '' : +el.value) : el.value;
   const rer = el.dataset.r && ev.type === 'change';
-  if (k === 't' && a === 'teamId') { const t = curT(), tm = teamById(v); if (v === '__txt') return; if (tm) applyTeam(t, tm); else setTeam(t, null); touch(t); }
+  if (k === 't' && a === 'teamId') { const t = curT(), tm = teamById(v); if (v === '__txt') return; const old = teamOf(t); if (tm) applyTeam(t, tm); else setTeam(t, null); if (old && (!tm || old.id !== tm.id)) spDel('t', old.id, t.id); touch(t); }
   else if (k === 't') { const t = curT(); t[a] = v; touch(t); if (a === 'min') $('#sum').innerHTML = sumHtml(t); }
   else if (k === 'i' || k === 'g') {
     const t = curT(), it = t.items.find(x => x.id === a); if (!it) return;
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
     touch(t); if (b === 'min') $('#sum').innerHTML = sumHtml(t);
     if (k === 'i' && (b === 'desc' || b === 'coach')) {   // eigene Notizen/Keypoints bei der Übung merken (nicht bei eigenen Übungen und Athletik: dort ist das Feld der Übungstext selbst)
-      const key = matNoteKey(it), e = key && libGet(key); if (e && e.src === 'rtp' && it.type !== 'athletik') { const n = DB.notes[key] = DB.notes[key] || {}; n[b] = v; if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
+      const key = matNoteKey(it), e = key && libGet(key); if (e && e.src === 'rtp' && it.type !== 'athletik') { const n = DB.notes[key] = DB.notes[key] || {}; n[b] = v; n.u = Date.now(); if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
     }
     if (k === 'i' && b === 'mat') {
       if ($('#mat')) $('#mat').innerHTML = matCard(t, 'edit');
-      const key = matNoteKey(it); if (key) { const n = DB.notes[key] = DB.notes[key] || {}; n.mat = v; if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
+      const key = matNoteKey(it); if (key) { const n = DB.notes[key] = DB.notes[key] || {}; n.mat = v; n.u = Date.now(); if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
     }
   }
-  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
+  else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; DB.notes[key].u = Date.now(); if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { c[b] = v; syncCustom(c); } }
   else if (k === 'pl') S.pf[a] = v;
@@ -1249,8 +1560,8 @@ function onInput(ev) {
   else if (k === 'ms') { const f = S.mf, x = f.sessions.find(y => y.id === a); if (!x) return; x[b] = b === 'wd' ? +v : v; if (b === 'min') f.minEdited = 1; }
   else if (k === 's' && a === 'team') { S.sTeam = v; render.seasonScrolled = false; render(); return; }
   else if (k === 's' && a === 'year') { S.sYear = +v === seasonYearNow() ? 0 : +v; render.seasonScrolled = false; render(); return; }
-  else if (k === 's' && a === 'startOwn') { const s = seasonCfg(), y = seasonYear(); s.starts = s.starts || {}; if (!v || v === seasonDefault(y)) delete s.starts[y]; else s.starts[y] = v; s.set = 1; render.seasonScrolled = false; save(); }
-  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
+  else if (k === 's' && a === 'startOwn') { const s = seasonCfg(), y = seasonYear(); s.starts = s.starts || {}; if (!v || v === seasonDefault(y)) delete s.starts[y]; else s.starts[y] = v; s.set = 1; spU(S.sTeam); render.seasonScrolled = false; save(); }
+  else if (k === 's') { const s = seasonCfg(); s[a] = v; s.set = 1; spU(S.sTeam); if (a === 'stage') DB.stage = v; render.seasonScrolled = false; save(); }
   else if (k === 'l') { S.lib[a] = v; S.lib.limit = 60; if (a === 'q') { $('#liblist').innerHTML = libList(); return; } if (a === 'stage') S.lib.sp = ''; }
   if (rer) render();
 }
@@ -1262,6 +1573,10 @@ document.addEventListener('change', ev => {
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
 render();
+if (SYNC_ON) {   // Abgleich: beim Start, bei Rückkehr in die App, wenn wieder online, und jede Minute solange die App sichtbar ist
+  addEventListener('online', spAuto); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') spAuto(); });
+  setInterval(() => { if (document.visibilityState === 'visible') spAuto(); }, 60000); setTimeout(spAuto, 400);
+}
 // UTP-Links: Verbindung schon beim Berühren des Knopfs aufbauen, damit die Erklärung schneller aufgeht.
 document.addEventListener('pointerdown', ev => {
   const a = ev.target.closest && ev.target.closest('a.utp'); if (!a) return;
