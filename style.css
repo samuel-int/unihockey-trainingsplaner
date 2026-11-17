@@ -78,7 +78,7 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .run .card p, .run .gbox p { font-size: 1.05rem; }
 .runnav { position: fixed; left: 0; right: 0; bottom: 0; max-width: 720px; margin: 0 auto; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); }
 @media print {
-  #nav, .top .btn, .back, .crumbs, #toast, .utp, .ctx { display: none !important; } body { background: #fff; color: #000; } .top { position: static; }
+  #nav, .top .btn, .back, .crumbs, .tnav, #toast, .utp, .ctx { display: none !important; } body { background: #fff; color: #000; } .top { position: static; }
   .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; } #app { max-width: none; padding: 0; }
 }
 /* Blöcke, Auswahl, Rückgängig */
@@ -97,6 +97,9 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .top .seg { margin: 2px 0 6px; padding: 2px; } .top .seg a { min-height: 36px; padding: 5px 6px; }
 .top .chips.one { position: relative; flex-wrap: nowrap; overflow-x: auto; margin: 0 -2px; padding: 0 2px 2px; scrollbar-width: none; overscroll-behavior-x: contain; } .top .chips.one::-webkit-scrollbar { display: none; } .top .chips.one .chip { flex: none; white-space: nowrap; }
 .week { scroll-margin-top: calc(var(--hh, 120px) + 10px); }
+/* Blättern zwischen Trainings (Kopfzeile von Editor und Übersicht) */
+.tnav { display: flex; gap: 8px; margin-top: 6px; } .tnav .nv { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; min-height: 44px; padding: 3px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); line-height: 1.25; }
+.tnav .nv.n { text-align: right; } .tnav .nv b { font-size: .88rem; color: var(--pri); } .tnav .nv small { font-size: .72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tnav .nv.dis { opacity: .45; } .tnav .nv.dis b { color: var(--muted); }
 /* Mannschaften, Umschalter */
 .seg { display: flex; gap: 4px; padding: 3px; margin: 2px 0 8px; border-radius: 12px; background: var(--line); } .seg a { flex: 1; text-align: center; padding: 8px 6px; min-height: 40px; border-radius: 10px; color: var(--muted); font-weight: 600; font-size: .9rem; display: flex; align-items: center; justify-content: center; } .seg a.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .chip.swatch { width: 40px; min-height: 40px; padding: 0; border-radius: 50%; border: 3px solid transparent; } .chip.swatch.sel { border-color: var(--text); background: var(--c); }
