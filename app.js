@@ -160,6 +160,23 @@ function resolveTeam(t, meta) {   // Import: Mannschaft des Trainings auf dem Ge
   if (!tm && nm) { const m = meta[t.teamId] || {}; tm = mkTeam(nm, m.stage || t.stage); if (m.color) tm.color = m.color; if (m.ort) tm.ort = m.ort; if (m.time) tm.time = m.time; if (Array.isArray(m.days)) tm.days = m.days; if (m.min) tm.min = +m.min || 0; tm.sessions = Array.isArray(m.sessions) ? m.sessions : legacySessions(tm); if (m.id && !teamById(m.id)) tm.id = m.id; }
   setTeam(t, tm); return tm;
 }
+// Schwerpunkte/Erscheinungsformen einheitlich: alte Schreibweisen (RTP.spAlias / RTP.efAlias, erzeugt von tools/build-rtp.js) in gespeicherten Trainings und eigenen Übungen auf die einheitlichen Namen umstellen.
+// Läuft beim Start, nach Import und nach dem Abgleich im Mannschaftsraum; ändert t.updated nicht (reine Schreibweise, kein Inhalt).
+const aliasMap = o => { const m = new Map(); for (const [k, v] of Object.entries(o || {})) m.set(norm(k), v); return m; };
+const SPA = aliasMap(R.spAlias), EFA = aliasMap(R.efAlias);
+const spName = x => typeof x === 'string' ? SPA.get(norm(x)) || x : x;
+const efName = x => typeof x === 'string' ? EFA.get(norm(x)) || x : x;
+function normSp() {
+  let ch = false; const set = (o, k, v) => { if (o[k] !== v) { o[k] = v; ch = true; } };
+  const list = (o, k, fn) => { if (Array.isArray(o[k])) { const n = [...new Set(o[k].map(fn))]; if (n.length !== o[k].length || n.some((x, i) => x !== o[k][i])) { o[k] = n; ch = true; } } };
+  for (const t of DB.trainings) {
+    if (t.sp) set(t, 'sp', spName(t.sp)); if (t.ef) set(t, 'ef', efName(t.ef));
+    if (typeof t.sec === 'string' && t.sec) { const i = t.sec.indexOf(': '), head = i > 0 ? t.sec.slice(0, i) : t.sec, rest = i > 0 ? t.sec.slice(i) : ''; set(t, 'sec', (spName(head) !== head ? spName(head) : efName(head)) + rest); }
+  }
+  for (const c of DB.custom) { list(c, 'sps', spName); list(c, 'efs', efName); }
+  return ch;
+}
+if (normSp()) flush();
 migrate();
 
 // ---------- Bibliothek (aus RTP + Goalie + eigene Übungen) ----------
@@ -761,7 +778,7 @@ function viewRtp() {
   <div class="card"><h2 class="nomargin">${esc(st.name)}${st.draft ? ' <span class="chip">Arbeitsstand</span>' : ''}</h2><p class="muted small">${esc(st.annahme)}</p>
     <details><summary>Hinweise zum RTP</summary><ul class="small">${R.hints.map(h => `<li>${esc(h)}</li>`).join('')}</ul>
       ${st.notes.map(n => `<b>${esc(n.title)}</b>${n.text.map(x => `<p class="small">${esc(x)}</p>`).join('')}`).join('')}
-      <b>Termine &amp; Abkürzungen</b><ul class="small">${Object.entries(R.glossary).map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul></details>
+      ${Object.keys(R.glossary || {}).length ? `<b>Termine &amp; Abkürzungen</b><ul class="small">${Object.entries(R.glossary).map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('')}</ul>` : ''}</details>
     <details><summary>Farbskala Erscheinungsformen</summary>${R.efs.teta.map(e => `<div class="small"><span class="dot" style="background:${efColor(e)}"></span>${esc(e)}</div>`).join('')}<p class="small muted">Athletik: ${R.efs.athletik.map(esc).join(' · ')}</p></details></div>
   ${S.flow ? '' : gbox}
   <h2>Trainingsblöcke</h2>${st.blocks.map(b => `<a class="card item" style="--c:${efColor(b.main.ef)}" href="#/rtp/${st.id}/${b.nr}"><div class="row"><b>Block ${b.nr} · ${esc(b.main.sp || b.main.ef)}</b><span class="muted small nowrap">${esc(b.monat || b.phase)}</span></div>
@@ -1400,7 +1417,7 @@ function doImport() {
   }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
-  LIB = null; flush(); closeModal();
+  normSp(); LIB = null; flush(); closeModal();
   if (shared) { toast(`«${shared.name}» importiert (${d.t.length} Training${d.t.length === 1 ? '' : 's'})`); go('/team/' + shared.id); return; }
   toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
 }
@@ -1540,7 +1557,7 @@ async function spSyncInner(id) {
       if (n === 0 && row.ver === sp.ver && h0 === sp.hash) { sp.last = new Date().toISOString(); flush(); set('ok'); return true; }   // nichts Neues auf beiden Seiten
       const rm = row.data ? await spDec(sp.k, row.data) : null;
       if (rm && (rm.v !== 1 || !rm.team || rm.team.id !== tm.id)) throw spErrObj('Dieser Raum passt nicht zu dieser Mannschaft oder braucht eine neuere App.');
-      const changed = spMerge(tm, sp, rm), mine = spContent(tm, sp), canon = spCanon(mine);
+      const changed = !!(spMerge(tm, sp, rm) | normSp()), mine = spContent(tm, sp), canon = spCanon(mine);
       if (changed) flush();
       if (sp.role === 'r' || (rm && canon === spCanon(rm))) { sp.ver = row.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
       const put = (await spRpc('space_put', { p_id: sp.id, p_t: sp.t, p_data: await spEnc(sp.k, mine), p_ver: row.ver }))[0];
