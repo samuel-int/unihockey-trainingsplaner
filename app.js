@@ -647,7 +647,7 @@ function viewEdit(t) {
   <div class="row sum"><span id="sum">${sumHtml(t)}</span><span class="grow"></span><button class="btn sm" data-a="togAll">${t.items.every(i => S.open.has(i.id)) && t.items.length ? 'Alle zuklappen' : 'Alle aufklappen'}</button></div>
   ${t.items.map((it, i) => itemCard(t, it, i)).join('') || '<p class="muted center">Noch keine Blöcke.</p>'}
   <div class="row wrap"><button class="btn pri" data-a="pick">+ Aus Bibliothek</button><button class="btn" data-a="newEx">+ Neue eigene Übung</button><button class="btn gbtn" data-a="addG">+ Goalie-Übung</button></div>
-  <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><a class="btn" href="#${kid('/t/' + t.id + '/view')}">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
+  <div class="row wrap foot">${canShare(t) ? '<button class="btn" data-a="share">Teilen</button>' : ''}<a class="btn" href="#${kid('/t/' + t.id + '/view')}">Übersicht / Drucken</a><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
 }
 
 // ---------- Material (Kopfzeile des Trainings) ----------
@@ -1133,7 +1133,7 @@ function viewTeam(id) {
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div><div class="muted small">${metaLine(t, false)}</div>${reflTag(t)}<div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#${kid('/team/' + tm.id + '/edit')}">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
-  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button>${canShareTeam(tm) ? `<button class="btn" data-a="teamShare" data-k="${tm.id}">Mannschaft teilen</button>` : ''}</div>
   ${spCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
@@ -1470,7 +1470,7 @@ function viewMatch(t) {
     <label>Notiz<textarea data-b="t:notes" rows="2">${esc(t.notes)}</textarea></label></div>
   ${attLink(t)}${reflLink(t)}${reflCompactM(t)}
   <button class="btn pri block" data-a="matchEnd">Wettkampf abschliessen</button>
-  <div class="row wrap foot"><button class="btn" data-a="share">Teilen</button><button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
+  <div class="row wrap foot">${canShare(t) ? '<button class="btn" data-a="share">Teilen</button>' : ''}<button class="btn" data-a="dupT">Duplizieren</button><button class="btn danger" data-a="delT">Löschen</button></div>`;
 }
 // Kompakte Darstellung der Wettkampf-Reflexion (Spieler-Notizen und Tore/Assists erscheinen bewusst nicht)
 function reflCompactM(t) {
@@ -1538,12 +1538,12 @@ let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); });
 function viewMore() {
   return head('Mehr') + `
-  <div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">Einzelne Trainings teilst du im Training über «Teilen» (Link, QR-Code oder Datei). Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.${SYNC_ON ? ' Die Sicherungsdatei enthält dann auch die Zugangsschlüssel zu deinen Mannschaftsräumen – bewahre sie sicher auf und gib sie nicht weiter.' : ''}</p>
-    <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>
+  ${isHelperDevice() ? '' : `<div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">${SYNC_ON ? 'Deine Co-Trainer lädst du auf der Mannschaftsseite über «Mannschaft teilen» ein: Sie gleichen sich automatisch ab. ' : ''}Einzelne Trainings gibst du im Training über «Teilen» als Kopie weiter (Link, QR-Code oder Datei) – für Trainer anderer Mannschaften. Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.${SYNC_ON ? ' Die Sicherungsdatei enthält dann auch die Zugangsschlüssel zu deinen Mannschaftsräumen – bewahre sie sicher auf und gib sie nicht weiter.' : ''}</p>
+    <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>`}
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
     <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
-  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern, Anwesenheiten und Notizen zu Spielern (aus der Reflexion) gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten und Spieler-Notizen nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> Auf der Mannschaftsseite kannst du eine Mannschaft mit Co-Trainern abgleichen. Die Daten – auch Spielerliste, Anwesenheit und Reflexionen – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
-  <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist nur auf diesem Gerät gespeichert.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
+  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen auf diesem Gerät, es gibt kein Konto.${SYNC_ON ? ' <b>Automatisch abgeglichen</b> wird nur über den Mannschaftsraum (siehe unten).' : ' Es gibt keinen Server.'} Wenn du ein einzelnes Training teilst, geht eine <b>Kopie</b> weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern, Anwesenheiten und Notizen zu Spielern (aus der Reflexion, auch Tore und Assists) gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nie in einen Teilen-Link${SYNC_ON ? '' : ' (nur die Spielerliste, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst)'}. Sie sind im Mannschaftsraum (verschlüsselt) und in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> «Mannschaft teilen» auf der Mannschaftsseite richtet einen Mannschaftsraum ein und lädt Co-Trainer ein (mit Änderungsrecht oder nur zum Lesen). Die Daten – auch Spielerliste, Anwesenheit und Reflexionen – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht, und gleichen sich bei allen automatisch ab. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
+  <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist auf diesem Gerät gespeichert${SYNC_ON ? " (Mannschaften mit Mannschaftsraum zusätzlich verschlüsselt auf dem Server)" : ""}.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
   <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
 }
 
@@ -1569,7 +1569,7 @@ async function shareTraining(t) {
   const tm = teamOf(t), m = tm ? [teamMeta(tm, false)] : [], data = { v: 1, t: [slim(t)], m }, url = appUrl() + '#i=' + await pack(data);
   const qr = qrSvg(url, 'Für einen QR-Code ist dieses Training zu umfangreich – nutze den Link oder die Datei.');
   S.share = { url, t, data, file: `training-${norm(t.title).replace(/ /g, '-')}.json`, text: 'Unihockey-Training: ' + t.title };
-  modal(`<h2>«${esc(t.title)}» teilen</h2><p class="small">Die Empfängerin öffnet den Link oder scannt den Code – das Training wird in ihre App importiert. Es findet keine laufende Synchronisation statt; bei Änderungen einfach nochmals teilen.</p>
+  modal(`<h2>«${esc(t.title)}» teilen</h2><p class="small"><b>Kopie – für Trainer anderer Mannschaften.</b> ${SYNC_ON ? 'Deine Co-Trainer haben die Mannschaft im Mannschaftsraum ohnehin automatisch (Mannschaftsseite → «Mannschaft teilen»). ' : ''}Die Empfängerin öffnet den Link oder scannt den Code – das Training wird in ihre App importiert. Danach gleicht sich nichts mehr ab; bei Änderungen einfach nochmals teilen. Anwesenheit und Spieler-Notizen gehen nie mit.</p>
     <div class="qr">${qr}</div><div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
 }
 function importData(d) {
@@ -1631,6 +1631,10 @@ const SP_PRUNE = 400 * 864e5;   // Löschmarkierungen älter als rund 13 Monate 
 const SP_RANK = { r: 1, w: 2, o: 3 };
 const SP_ROLE = { o: 'Besitzer', w: 'Co-Trainer', r: 'Nur lesen' };
 const spOf = id => (DB.spaces && DB.spaces[id]) || null;
+// Rollen: Teilen und Sichern liegt beim Haupttrainer (eigene Mannschaften oder Besitzer eines Mannschaftsraums). Wer nur als Co-Trainer (w) oder Nur-Lesen (r) in Mannschaftsräumen ist, braucht es nicht.
+const canShareTeam = tm => { const sp = tm && spOf(tm.id); return !sp || sp.role === 'o'; };   // Mannschaft teilen / Einladen / einzelne Trainings der Mannschaft teilen
+const canShare = t => { const tm = teamOf(t); return !tm || canShareTeam(tm); };
+const isHelperDevice = () => SYNC_ON && DB.teams.length > 0 && DB.teams.every(tm => { const sp = spOf(tm.id); return sp && (sp.role === 'w' || sp.role === 'r'); });   // alle Mannschaften stammen aus Räumen als Co-Trainer/Nur lesen, keine eigene
 const spIds = () => SYNC_ON ? Object.keys(DB.spaces || {}).filter(id => teamById(id)) : [];
 const spClone = x => JSON.parse(JSON.stringify(x));
 const spSafe = k => typeof k === 'string' && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
@@ -2083,7 +2087,15 @@ const A = {
   awExport(el) { jsModal(teamById(el.dataset.tm), el.dataset.k); },
   awDownload() { const r = S.jsx; if (!r || !r.rows) return; saveBlob(r.name, new Blob([r.text], { type: 'text/csv;charset=utf-8' })); toast('Datei heruntergeladen'); },
   tshOpen(el) { S.tsh = { id: el.dataset.k, which: 'up', pl: false }; buildTeamShare(); },
-  share() { shareTraining(curT()); },
+  share() { const t = curT(); if (t && canShare(t)) shareTraining(t); },
+  teamShare(el) {   // «Mannschaft teilen» = Mannschaftsraum: einrichten (falls nötig) und Co-Trainer einladen; ohne Server in dieser App bleibt die Kopie als Rückfall
+    const id = el.dataset.k, tm = teamById(id); if (!tm || !canShareTeam(tm)) return;
+    if (!SYNC_ON) return A.tshOpen(el);
+    if (spOf(id)) return spInviteModal(id, 'w');
+    modal(`<h2>«${esc(tm.name)}» teilen</h2><p>Du teilst die Mannschaft über einen <b>Mannschaftsraum</b>: Deine Co-Trainer sehen und ändern dieselben Daten (Trainings, Spielerliste, Anwesenheit, Reflexionen), und alles gleicht sich <b>automatisch</b> ab.</p>
+      <p class="small">Die Daten liegen verschlüsselt auf einem Server, der keine Namen sieht. Der Schlüssel steht nur im Einladungslink. Danach wählst du, ob du Co-Trainer (können ändern) oder Personen nur zum Lesen einlädst.</p>
+      <div class="col"><button class="btn pri" data-a="spSetup" data-k="${esc(id)}">Raum einrichten und einladen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
   print() { print(); },
   shNative() { const { url, t, text } = S.share; if (navigator.share) navigator.share({ title: t.title, text, url }).catch(() => { }); else A.shCopy(); },
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
