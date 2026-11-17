@@ -238,15 +238,66 @@ console.log('Trainingsformen (eindeutige Namen) und Links pro Stufe:');
 let tf = new Set(), tl = new Set();
 for (const [id, s] of Object.entries(STATS)) { s.forms.forEach(x => tf.add(x)); s.linked.forEach(x => tl.add(x)); console.log(' ', id, s.forms.size, 'Formen,', s.linked.size, 'mit Link,', s.forms.size - s.linked.size, 'ohne,', s.conflicts, 'Namen mit mehreren Links innerhalb der Stufe'); }
 console.log('  alle Stufen zusammen:', tf.size, 'Formen,', tl.size, 'mit Link');
-out.glossary = {
-  'AV': 'Ausbildungsverantwortliche*r',
-  'Trainingsbesuch AV': 'Besuch der/des Ausbildungsverantwortlichen im Training',
-  'SpuSp-Gespräche': 'Einzelgespräche mit Spieler*innen (Entwicklungsgespräch)',
-  'Staffmeeting': 'Übersicht und Planung der nächsten Monate/Schwerpunkte',
-  'Vereinsmeeting': 'Sitzung mit allen Staffs, ev. interne Weiterbildung',
-  'Ferien': 'Dauer der Ferien abhängig von Kanton, Verein und Hallenverfügbarkeit',
-  'Saisonpause': 'Teamabschluss-Event, Planung neue Saison, Kommunikation Verein/Staff/Eltern zu Teamzusammensetzung und Kick-off',
+// ---------- Bereinigung der Daten (die Excel-Originale bleiben unverändert) ----------
+// Die Excel-Dateien kommen vom Verband und würden beim nächsten Update überschrieben. Darum stehen Korrekturen hier, nicht in den Dateien,
+// und werden bei jedem Bauen angewendet.
+
+// 1) Schwerpunkte (sp), Erscheinungsformen (ef) und Tippfehler in Ausbildungszielen vereinheitlichen.
+// Links steht die Schreibweise in den Excel-Dateien, rechts die einheitliche. Gewählt wurde die häufigste bzw. sprachlich sauberste.
+// Die Tabelle wird als RTP.spAlias / RTP.efAlias mitgeliefert: app.js benutzt sie, um gespeicherte Trainings, eigene Übungen und
+// Merkzettel mit alter Schreibweise beim Laden anzupassen. Nur hier pflegen, nicht doppelt in app.js.
+const SP_ALIAS = {
+  '1. Gedanke Nachsetzen': '1. Gedanke nachsetzen',          // wie «1. Gedanke vorwärts»
+  'Forechecking / Pressing': 'Forechecking und Pressing',      // «und» statt Schrägstrich (2 : 1)
+  'Freilaufen, Anbieten': 'Freilaufen und Anbieten',           // «und» statt Komma (2 : 1 : 1)
+  'Freilaufen, anbieten': 'Freilaufen und Anbieten',
+  'Gezogen und Geschlagen schiessen': 'Geschlagen und gezogen schiessen',   // Gross-/Kleinschreibung, Reihenfolge der Mehrheit (2 : 1)
+  'steuern und abdrängen': 'Steuern und abdrängen',            // Satzanfang gross
+  'Unterzahl-situationen': 'Unterzahlsituationen',             // Tippfehler
+  'aus dem Lauf schiessen': 'Aus dem Lauf schiessen',          // Satzanfang gross
+  'effizient schiessen': 'Effizient schiessen',
+  'unberechenbar schiessen': 'Unberechenbar schiessen',
+  'vielseitig schiessen': 'Vielseitig schiessen',
 };
+const EF_ALIAS = {   // Standardliste = Erscheinungsformen im Info-Blatt der Excel-Dateien (out.efs.teta)
+  'Defensive 1:1-Situaitonen bestimmen': 'Defensive 1:1-Situationen bestimmen',   // Tippfehler
+  'Gemeinsam und druckvoll Räume schliessen': 'Gemeinsam und druckvoll die Räume schliessen',
+  'Gemeinsam wirkungsvoll das Spiel aufbauen': 'Gemeinsam und wirkungsvoll das Spiel aufbauen',
+  'Klare Torchancen erarbeiten und Tore erzielen': 'Torchancen erarbeiten und Tore erzielen',
+};
+// Eindeutige Tippfehler in Ausbildungszielen (Teilstring -> Ersatz)
+const ZIEL_FIX = [
+  ['gegnersichem', 'gegnerischem'], ['reduziertem gegnerischen Druck', 'reduziertem gegnerischem Druck'],
+  ['ohne Gegnerischen Einfluss', 'ohne gegnerischen Einfluss'], ['Frei gewählt Inhalte', 'Frei gewählte Inhalte'],
+  ['beid- und einhändige in', 'beid- und einhändig in'],
+];
+const REPORT = { sp: {}, ef: {}, ziel: {} };
+const fixTxt = (kind, v, tbl) => { const n = tbl[v] || v; if (n !== v) { const k = v + ' → ' + n; REPORT[kind][k] = (REPORT[kind][k] || 0) + 1; } return n; };
+for (const st of out.stages) for (const b of st.blocks) for (const p of [b.main, b.sec]) if (p) {
+  p.sp = fixTxt('sp', p.sp, SP_ALIAS); p.ef = fixTxt('ef', p.ef, EF_ALIAS);
+  for (const [x, y] of ZIEL_FIX) if (p.ziel.includes(x)) { REPORT.ziel[x + ' → ' + y] = (REPORT.ziel[x + ' → ' + y] || 0) + 1; p.ziel = p.ziel.split(x).join(y); }
+}
+out.spAlias = SP_ALIAS; out.efAlias = EF_ALIAS;
+console.log('Vereinheitlicht (Anzahl Blöcke):', JSON.stringify(REPORT, null, 1));
+
+// 2) Themen, die in der App nicht erscheinen sollen: Ausbildungsverantwortliche (AV), Trainingsbesuch AV, SpuSp-Gespräche, Staffmeeting, Vereinsmeeting.
+// Gefiltert wird in Ereignissen der Blöcke und Wochen, in den Ausbildungsgedanken und im Glossar.
+const DROP = /Staffmeeting|Vereinsmeeting|SpuSp|Trainingsbesuch|Ausbildungsverantwortliche|\bAV\b/;
+let dropped = 0;
+for (const st of out.stages) {
+  for (const b of st.blocks) {
+    const keep = l => l.filter(e => { const d = DROP.test(e); if (d) dropped++; return !d; });
+    b.events = keep(b.events); for (const w of b.weeks) w.events = keep(w.events);
+  }
+  // Satz über die Staffmeetings in den Ausbildungsgedanken (U14) streichen
+  const SATZ = ' Die Staffmeetings (siehe Termine/Events) dienen zur laufenden Planung/Übersicht der Schwerpunkte.';
+  for (const n of st.notes) n.text = n.text.map(x => x.split(SATZ).join(''));
+}
+console.log('Ereignisse entfernt:', dropped);
+
+// Glossar «Termine & Abkürzungen»: leer. Die Erklärungen zu Ferien und Saisonpause erscheinen nicht mehr in den Hinweisen zum RTP
+// (die Termine in den Wochen bleiben). Das Feld bleibt als leeres Objekt, damit alte Versionen der App nicht brechen.
+out.glossary = {};
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, '// Automatisch erzeugt aus den Rahmentrainingsplänen (RTP) von swiss unihockey – tools/build-rtp.js\nwindow.RTP = ' + JSON.stringify(out) + ';\n');
 console.log('geschrieben:', OUT, Math.round(fs.statSync(OUT).size / 1024) + ' KB');
