@@ -114,6 +114,10 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .sgrid { display: grid; grid-template-columns: 1.45fr 1fr .8fr; gap: 8px; } .sgrid select, .sgrid input { padding-left: 8px; padding-right: 6px; }
 .card.choice.sel { outline: 2px solid var(--pri); } .card.choice:disabled { opacity: .5; } .card.choice { margin: 8px 0; }
 
+/* Athletik-Angaben (RTP) als kleine Tabelle */
+.athbox { background: var(--bg); border-radius: 10px; padding: 8px 12px; margin: 8px 0; }
+.ath { border-collapse: collapse; width: 100%; font-size: .9rem; } .ath th { text-align: left; font-weight: 600; color: var(--muted); padding: 5px 10px 5px 0; vertical-align: top; white-space: nowrap; width: 1%; } .ath td { padding: 5px 0; }
+.ath tr + tr th, .ath tr + tr td { border-top: 1px solid var(--line); } .athbox p { margin: 6px 0 2px; } .run .ath { font-size: 1.05rem; }
 /* Material */
 .matcard { border-left: 4px solid var(--gfg); } .matnone { margin: 6px 2px; }
 
