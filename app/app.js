@@ -185,7 +185,7 @@ function lib() {
       if (!it.form) continue;
       const e = add(it.form, 'athletik', st, b); if (!e) continue;
       e.faktoren = e.faktoren || new Set(); e.faktoren.add(se.faktor);
-      e.params = e.params || []; if (e.params.length < 6 && !e.params.some(p => p.st === st.id && p.whg === it.whg)) e.params.push({ st: st.id, ...it });
+      e.params = e.params || []; if (e.params.length < 6 && !e.params.some(p => p.st === st.id && p.whg === it.whg)) e.params.push({ st: st.id, ...it, faktor: se.faktor, ziel: athZiel(b, se.faktor) });
     }
   }
   G.exercises.forEach(x => m.set('g:' + norm(x.name), { ...x, key: 'g:' + norm(x.name), kind: 'goalie', src: 'goalie', stages: new Set(x.stages), sps: new Set([G.cats[x.cat]]), efs: new Set(), uses: new Set() }));
@@ -195,7 +195,20 @@ function lib() {
 const libGet = key => lib().find(e => e.key === key);
 const goalieEx = name => lib().find(e => e.kind === 'goalie' && e.name === name);
 // Link zur Übung im UTP und deren Text (UTPX = app/data-utp.js, von tools/build-utp.js; Texte © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell). Pro Stufe zuerst die Stufen-Adresse, sonst die allgemeine.
-function utpRel(name, stage) { const k = norm(name || ''); return k ? ((R.linksBy || {})[stage] || {})[k] || (R.links || {})[k] || '' : ''; }
+// Tolerant: Gross/klein, Bindestriche und Klammerzusätze («Squat (ohne oder leichtes Gewicht)») spielen keine Rolle; zuletzt wird nach dem Titel der UTP-Übung gesucht.
+const normT = s => norm(String(s || '').replace(/\([^)]*\)/g, ' '));
+let UIDX = null;
+function utpIdx() {
+  if (UIDX) return UIDX; UIDX = new Map(); const byId = new Map();
+  for (const rel of Object.values(R.links || {})) byId.set(rel.split('?')[0], rel);
+  for (const [id, ex] of Object.entries(UTPX)) { const rel = byId.get(id), k = normT(ex.t); if (rel && k && !UIDX.has(k)) UIDX.set(k, rel); }
+  return UIDX;
+}
+function utpRel(name, stage) {
+  const k = norm(name || ''); if (!k) return ''; const by = (R.linksBy || {})[stage] || {}, all = R.links || {};
+  if (by[k] || all[k]) return by[k] || all[k];
+  const t = normT(name); return by[t] || all[t] || utpIdx().get(t) || '';
+}
 function utpUrl(name, stage) { const rel = utpRel(name, stage); return rel ? (R.utpBase || 'https://utp.swissunihockey.ch/guest/exercises/') + rel : ''; }
 const utpEx = (name, stage) => UTPX[utpRel(name, stage).split('?')[0]] || null;
 const utpBtn = (url, cls = '') => `<a class="btn pri utp ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Erklärung im UTP ↗</a>`;
@@ -236,6 +249,80 @@ function athSession(b, n, faktor) {
   return ss.find(s => s.nums.includes(n) && (!faktor || s.faktor === faktor)) || ss.find(s => s.nums.includes(n)) || ss.find(s => s.faktor === faktor) || ss[(n - 1) % ss.length];
 }
 
+// Athletik als einzelne Übungen: pro Übung der RTP-Session ein eigener Block mit den RTP-Angaben in it.ath = { whg, serien, gewicht, rhythmus, keypoints, faktor, ziel } (alles optional).
+// Die Dauer des Athletik-Slots wird auf die Übungen verteilt (ganze Minuten, Summe = Dauer). Alte Trainings mit dem Sammelblock «Athletik: Kraft» (Text in it.desc) bleiben unverändert.
+const athPlay = x => /spielerische/i.test((x && x.whg) || '');   // «5 min. spielerische Anwendung» statt Wiederholungen
+function athData(x, faktor, ziel) {
+  const a = athPlay(x) ? { whg: 'spielerische Anwendung' } : { whg: x.whg, serien: x.serien, gewicht: x.gewicht, rhythmus: x.rhythmus };
+  a.keypoints = x.keypoints; a.faktor = faktor || x.faktor; a.ziel = ziel || x.ziel;
+  for (const k of Object.keys(a)) if (!a[k]) delete a[k];
+  return a;
+}
+const athZiel = (b, faktor) => { const z = (b.athletik || {}).ziele || []; return (z.find(x => x.faktor && x.faktor === faktor) || z.find(x => !x.faktor) || z[0] || {}).text || ''; };
+function athMins(list, total) {   // spielerische Anwendungen behalten ihre eigene Minutenangabe, den Rest teilen sich die übrigen Übungen
+  const fixed = list.map(x => athPlay(x) ? +((/(\d+)\s*min/i.exec(x.whg) || [])[1]) || 0 : 0), nFree = fixed.filter(f => !f).length, rest = Math.max(0, total - fixed.reduce((a, f) => a + f, 0));
+  let extra = nFree ? rest % nFree : 0; const base = nFree ? Math.floor(rest / nFree) : 0;
+  return list.map((_, i) => fixed[i] || base + (extra-- > 0 ? 1 : 0));
+}
+function athBlocks(b, n, faktor, total, skipPlay) {   // skipPlay: bei Stufen mit eigenem Slot «Athletik Spiel» ist die spielerische Anwendung schon ein eigener Block
+  const se = athSession(b, n, faktor), list = se ? se.items.filter(x => x.form && !(skipPlay && athPlay(x))) : []; if (!list.length) return [];
+  const mins = athMins(list, total), ziel = athZiel(b, se.faktor);
+  return list.map((x, i) => mkItem('athletik', x.form, mins[i], { ath: athData(x, se.faktor, ziel) }));
+}
+function athHtml(a) {   // RTP-Angaben als kleine Tabelle
+  if (!a || typeof a !== 'object') return '';
+  const play = /spielerische/i.test(a.whg || ''), rows = [[play ? 'Form' : 'Wiederholungen', a.whg], ['Serien', a.serien], ['Gewicht', a.gewicht], ['Rhythmus', a.rhythmus], ['Keypoints', a.keypoints], ['Entwicklungsfaktor', a.faktor]].filter(r => r[1]);
+  if (!rows.length && !a.ziel) return '';
+  return `<div class="athbox"><table class="ath"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>${a.ziel ? `<p class="small nomargin"><b>Athletik-Ziel:</b> ${esc(a.ziel)}</p>` : ''}</div>`;
+}
+
+// ---------- Swiss Way Warm-up (Poster swiss unihockey, Daten in data-swissway.js) ----------
+// Die Beschreibung des Blocks «Swiss Way Warm-up» nennt, welche Übungen heute dran sind. Die Auswahl hängt nur von einer Zahl (Seed) und vom Tag ab (reine Funktion):
+// aufeinanderfolgende Trainings bekommen verschiedene Auswahlen, dasselbe Training immer dieselbe. it.sw = { s: Seed } merkt, dass die Beschreibung erzeugt wurde (und mit welchem Seed).
+// Vom Trainer geänderte Beschreibungen werden nie automatisch überschrieben: erzeugt wird nur bei leerer Beschreibung ohne it.sw (erstes Öffnen) oder auf Knopfdruck «Andere Auswahl».
+const SWD = window.SWISSWAY || null;
+const isSw = it => !!it && norm(it.name || '') === 'swiss way warm up';
+const mod = (x, n) => ((x % n) + n) % n;
+function swissWayPlan(seed, ctx = {}) {
+  if (!SWD) return null;
+  const [p1, p2, p3] = SWD.parts, s = Math.floor(+seed || 0), pick = (a, i) => a[mod(i, a.length)];
+  const i1 = mod(s, p1.basis.length), i2 = mod(s + 1, p1.basis.length);   // Teil 1: zwei Basis rotierend (in Posterreihenfolge) + eine Ergänzung abwechselnd
+  const part1 = [p1.basis[Math.min(i1, i2)], p1.basis[Math.max(i1, i2)], pick(p1.erg, s)];
+  const skip = mod(s, p2.basis.length), part2 = [...p2.basis.filter((_, i) => i !== skip), pick(p2.erg, s)];   // Teil 2: die 8 Basis, eine weglassen (rotierend) + eine Ergänzung abwechselnd
+  const f = norm(ctx.faktor || ''), sp = norm((ctx.sp || '') + ' ' + (ctx.ef || ''));   // Teil 3: zwei Themen passend zum Tag
+  const names = /^kraft/.test(f) ? ['Drop Sets Varianten', 'Zweikämpfe'] : /^explosiv/.test(f) ? ['Explosive Sprünge', 'Drop Sets Varianten'] : /^schnell/.test(f) ? ['Beschleunigung', 'Richtungswechsel']
+    : /zweikampf|ballgewinn|1 1/.test(sp) ? ['Zweikämpfe', 'Richtungswechsel'] : /umschalt|raum|konter|tempo/.test(sp) ? ['Beschleunigung', 'Richtungswechsel']
+    : pick([['Laufschule', 'Richtungswechsel'], ['Beschleunigung', 'Zweikämpfe'], ['Explosive Sprünge', 'Laufschule'], ['Richtungswechsel', 'Drop Sets Varianten']], s);
+  return { p1: part1, p2: part2, p3: names.map(n => p3.items.find(x => x.n === n)), hard: pick(SWD.erschweren, s), ath: !!ctx.ath, faktor: ctx.faktor || '' };
+}
+function swissWayText(pl) {
+  if (!pl || !SWD) return '';
+  const [p1, p2, p3] = SWD.parts, ln = x => `• ${x.n} – ${x.t} – ${x.d}`;
+  return [`TEIL 1 · ${p1.titel} (${p1.min})`, ...pl.p1.map(ln), '', `TEIL 2 · ${p2.titel} (${p2.min})`, ...pl.p2.map(ln), 'Danach bei Bedarf Jogging.', '',
+    `TEIL 3 · ${p3.titel} (${p3.min})`, ...pl.p3.map(ln), ...(pl.ath ? [`Optional – im Anschluss folgt der Athletikteil${pl.faktor ? ' (' + pl.faktor + ')' : ''}.`] : []), '', `Heute erschweren: ${pl.hard}.`].join('\n');
+}
+function rtpSeq(stageId, blockNr, weekNr, idx) {   // fortlaufende Nummer des RTP-Trainings in der Stufe (aufeinanderfolgende Trainings = aufeinanderfolgende Zahlen)
+  const st = stageById(stageId), b = st && st.blocks.find(x => x.nr === +blockNr); if (!b) return +idx || 0;
+  const bi = st.blocks.indexOf(b); if (!st.slots) return bi * 12 + (+idx || 0);
+  return bi * b.weeks.length * st.perWeek + Math.max(0, b.weeks.findIndex(x => x.w === +weekNr)) * st.perWeek + (+idx || 0);
+}
+function trainingSeq(t) {   // Seed eines Trainings: RTP-Nummer, sonst die Reihenfolge der Trainings der Mannschaft nach Datum, sonst aus der Kennung
+  const r = t.rtp; if (rtpBlockOf(t)) return rtpSeq(r.stage, r.block, r.week, r.idx);
+  const tid = x => (teamOf(x) || {}).id || '';
+  if (t.date) return DB.trainings.filter(x => x !== t && x.date && tid(x) === tid(t) && (x.date < t.date || (x.date === t.date && (x.start || '') < (t.start || '')))).length;
+  return [...String(t.id)].reduce((a, c) => a + c.charCodeAt(0), 0);
+}
+function swCtx(t) {   // was am Tag sonst ansteht: Athletik-Faktor (Kraft/Explosivität/Schnelligkeit) und ob ein Athletikteil folgt
+  const aths = t.items.filter(i => i.type === 'athletik');
+  const faktor = aths.map(i => (i.ath && i.ath.faktor) || (/^Athletik:\s*(.+)$/.exec(i.name || '') || [])[1] || '').find(Boolean) || '';
+  return { faktor, ath: aths.length > 0, sp: t.sp, ef: t.ef };
+}
+function swFill(it, t, seed) { it.sw = { s: seed ?? trainingSeq(t) }; it.desc = swissWayText(swissWayPlan(it.sw.s, swCtx(t))); }
+function swEnsure(t) {   // bestehende Trainings: leere Beschreibung des Swiss-Way-Blocks beim ersten Öffnen erzeugen
+  if (!SWD) return; let ch = false;
+  for (const it of t.items) if (isSw(it) && !it.desc && !it.sw) { swFill(it, t); ch = true; }
+  if (ch) touch(t);
+}
 // ---------- Trainings ----------
 const mkItem = (type, name, min, extra) => ({ id: uid(), type, name: name || '', min: min ?? TYPES[type][2], desc: '', coach: '', g: { mode: 'team', name: '', text: '' }, ...extra });
 const getT = id => DB.trainings.find(t => t.id === id);
@@ -255,10 +342,16 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
   const gDef = (type, sp, ef, n) => type === 'skills' ? { mode: 'own', name: pickGoalieEx(stageId, n), text: '' } : { mode: 'team', name: '', text: goalieFocus(type, sp, ef, stageId) };
   if (st.slots) {
     const w = b.weeks.find(x => x.w === weekNr), tr = w.trainings[idx], n = b.weeks.indexOf(w) * st.perWeek + idx + 1;
+    const aSlot = st.slots.find(x => x.label === 'Athletik'), swc = { faktor: aSlot ? tr[aSlot.key] || '' : '', ath: !!(aSlot && tr[aSlot.key]), sp: b.main.sp, ef: b.main.ef }, seq = rtpSeq(stageId, blockNr, weekNr, idx);
     for (const s of st.slots) {
       const v = tr[s.key]; if (!v) continue;
       const type = slotType(s.label), it = mkItem(type, v, s.min);
-      if (s.label === 'Athletik') { const se = athSession(b, n, v); it.name = 'Athletik: ' + v; it.desc = se ? se.items.map(athLine).join('\n') : ''; }
+      if (s.label === 'Athletik') {   // einzelne Übungen statt Sammelblock; ohne RTP-Session bleibt der Sammelblock
+        const ab = athBlocks(b, n, v, s.min, st.slots.some(x => /Athletik Spiel/.test(x.label)));
+        if (ab.length) { ab.forEach((x, i) => { x.g = i ? { mode: 'team', name: '', text: '' } : gDef(type, b.main.sp, b.main.ef, n); items.push(x); }); continue; }
+        it.name = 'Athletik: ' + v;
+      }
+      else if (isSw(it)) { it.sw = { s: seq }; it.desc = swissWayText(swissWayPlan(seq, swc)); }
       else { const nt = note(norm(v)); it.desc = nt.desc || ''; it.coach = nt.coach || ''; if (nt.goalie) it.gNote = nt.goalie; if (nt.mat) it.mat = nt.mat; }
       it.g = gDef(type, b.main.sp, b.main.ef, n); if (it.gNote) { it.g.text = it.gNote; delete it.gNote; }
       items.push(it);
@@ -266,8 +359,11 @@ function trainingFromRtp(stageId, blockNr, weekNr, idx, date) {
     return newTraining({ ...base, items, title: `${st.id} · Block ${b.nr} · Woche ${weekNr}${st.perWeek > 1 ? ' · Training ' + (idx + 1) : ''}`, notes: b.regel.length ? 'Regel-Fokus: ' + b.regel.join(', ') : '' });
   }
   const n = idx + 1, se = athSession(b, n);
-  items.push({ ...mkItem('warmup', 'Warm-up', 10), g: gDef('warmup') });
-  items.push({ ...mkItem('athletik', 'Athletik' + (se ? ': ' + se.faktor : ''), 15), desc: se ? se.items.map(athLine).join('\n') : '', g: gDef('athletik') });
+  const seq = rtpSeq(stageId, blockNr, weekNr, idx), swb = { ...mkItem('warmup', 'Swiss Way Warm-up', 10), g: gDef('warmup') };
+  swb.sw = { s: seq }; swb.desc = swissWayText(swissWayPlan(seq, { faktor: se ? se.faktor : '', ath: true, sp: b.main.sp, ef: b.main.ef })); items.push(swb);
+  const ab = athBlocks(b, n, '', 15, false);
+  if (ab.length) ab.forEach((x, i) => { x.g = i ? { mode: 'team', name: '', text: '' } : gDef('athletik'); items.push(x); });
+  else items.push({ ...mkItem('athletik', 'Athletik' + (se ? ': ' + se.faktor : ''), 15), desc: se ? se.items.map(athLine).join('\n') : '', g: gDef('athletik') });
   items.push({ ...mkItem('skills', 'Skills / Goalie-Einschiessen', 10), g: gDef('skills', '', '', n) });
   const gp = (p, min) => p && items.push({ ...mkItem('gp', (p.gp && p.gp.length ? p.gp[(n - 1) % p.gp.length] : 'Good Practice: ' + (p.sp || p.ef)), min), desc: p.gp && p.gp.length ? '' : 'Trainingsform im UTP wählen (Bibliothek → Stufe und Schwerpunkt filtern).', g: gDef('gp', p.sp, p.ef) });
   gp(b.main, 20); gp(b.sec, 15);
@@ -283,10 +379,11 @@ function itemFromLib(e, t) {
   const type = TYPES[e.kind] ? e.kind : 'gp', it = mkItem(type, e.name, e.min);
   const nt = note(e.key); it.lib = e.key; if (nt.mat || e.mat) it.mat = nt.mat || e.mat;
   if (e.src === 'custom') Object.assign(it, customTxt(e));
-  else if (e.kind === 'athletik' && e.params) it.desc = athLine(e.params.find(p => p.st === t.stage) || e.params[0]);
+  else if (e.kind === 'athletik' && e.params) { const p = e.params.find(x => x.st === t.stage) || e.params[0]; it.ath = athData(p); }
   else if (e.src === 'rtp') { it.desc = nt.desc || ''; it.coach = nt.coach || ''; }
   it.g = e.kind === 'goalie' ? { mode: 'own', name: e.src === 'goalie' ? e.name : '', text: e.src === 'custom' ? e.desc || '' : '' }
     : { mode: 'team', name: '', text: nt.goalie || e.goalie || goalieFocus(type, [...e.sps][0] || t.sp, [...e.efs][0] || t.ef, t.stage) };
+  if (isSw(it) && SWD) swFill(it, t);   // Swiss Way Warm-up: Übungen des Tages in die Beschreibung
   return it;
 }
 
@@ -405,9 +502,9 @@ function itemCard(t, it, i) {
       <input class="name" data-b="i:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">
       <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
     ${open ? `<div class="body">
-      ${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
+      ${athHtml(it.ath)}${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
       <label>Typ<select data-b="i:${it.id}:type" data-r="1">${Object.entries(TYPES).map(([k, v]) => opt(k, v[0], it.type)).join('')}</select></label>
-      ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen am Text gelten für diese Übung in allen Trainings, auch in vergangenen.</div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>`}
+      ${cx ? `<div class="cxbox"><div class="small muted">Eigene Übung – Änderungen am Text gelten für diese Übung in allen Trainings, auch in vergangenen.</div><label>Beschreibung<textarea data-b="x:${it.id}:desc" rows="4">${esc(cx.desc || '')}</textarea></label><label>Keypoints<textarea data-b="x:${it.id}:coach" rows="2">${esc(cx.coach || '')}</textarea></label><label>Coachingfragen<textarea data-b="x:${it.id}:fragen" rows="2">${esc(cx.fragen || '')}</textarea></label><details ${cx.leichter || cx.schwerer || cx.vari ? 'open' : ''}><summary>Rad der Variation</summary><label>Erleichtern<textarea data-b="x:${it.id}:leichter" rows="2">${esc(cx.leichter || '')}</textarea></label><label>Erschweren<textarea data-b="x:${it.id}:schwerer" rows="2">${esc(cx.schwerer || '')}</textarea></label><label>Variieren<textarea data-b="x:${it.id}:vari" rows="2">${esc(cx.vari || '')}</textarea></label></details></div>` : `<label>${ux ? 'Eigene Notizen zur Übung' : 'Beschreibung / Organisation'}<textarea data-b="i:${it.id}:desc" rows="${ux ? 2 : isSw(it) ? 14 : 3}" placeholder="${ux ? 'Optional: eigene Anpassungen, Feldgrösse, Gruppen …' : 'Ablauf, Feldgrösse, Material …'}">${esc(it.desc)}</textarea></label>${isSw(it) && SWD ? `<div class="row wrap"><button class="btn sm" data-a="swNew" data-id="${it.id}">Andere Auswahl</button><span class="small muted grow">Wählt die Übungen des Tages neu aus und ersetzt die Beschreibung.</span></div>` : ''}`}
       <label>🎒 Material<input data-b="i:${it.id}:mat" value="${esc(itemMatTxt(it, t))}" placeholder="z.B. Hütchen, Bälle, Leibchen (mit Komma trennen)"></label>
       ${cx ? '' : `<label>${ux ? 'Eigene Keypoints / Coachingfragen' : 'Keypoints / Coachingfragen'}<textarea data-b="i:${it.id}:coach" rows="2" placeholder="${ux ? 'Optional: zusätzlich zu den Keypoints oben' : ''}">${esc(it.coach)}</textarea></label>`}
       <div class="gbox"><b>🧤 Goalie</b>
@@ -498,7 +595,7 @@ function viewRead(t) {
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
   ${rtpSummary(t)}${matCard(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
-    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
+    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${athHtml(it.ath)}${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}`;
 }
 
 // ---------- Ansicht: Hallenmodus ----------
@@ -520,7 +617,7 @@ function viewRun(t) {
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
-    ${itemUtp(it, t) ? `<div class="card">${explain(itemUtp(it, t), itemEx(it, t), 'run:' + it.id)}</div>` : ''}${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
+    ${it.ath ? `<div class="card">${athHtml(it.ath)}</div>` : ''}${itemUtp(it, t) ? `<div class="card">${explain(itemUtp(it, t), itemEx(it, t), 'run:' + it.id)}</div>` : ''}${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
     ${goalieHtml(it.g, true)}
     ${nx ? `<p class="muted center small">Als Nächstes: <b>${esc(nx.name || (TYPES[nx.type] || TYPES.sonst)[0])}</b> (${esc(nx.min)}′)</p>` : '<p class="muted center small">Letzter Block</p>'}
     <div class="row runnav"><button class="btn big" data-a="runGo" data-i="${r.i - 1}" ${r.i ? '' : 'disabled'}>‹ Zurück</button><button class="btn pri big" data-a="runGo" data-i="${r.i + 1}" ${nx ? '' : 'disabled'}>Weiter ›</button></div></div>`;
@@ -569,7 +666,7 @@ function viewLibItem(e) {
   if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div><p class="small muted">${esc(G.note)}</p>`;
   else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['mat', 'Material'], ['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
     <div class="row"><a class="btn" href="#/lib/edit/${e.id}">Bearbeiten</a><button class="btn danger" data-a="delC" data-id="${e.id}">Löschen</button></div>`;
-  else body = `${lu ? (lx ? `<div class="card"><b>Erklärung</b><div class="exb">${exBody(lx)}</div>${exLinks(lu, lx)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey. Öffnet in einem neuen Tab; braucht Internet.</p></div>`) : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<p class="small"><b>${esc(p.st)}:</b> ${esc([p.whg, p.serien && p.serien + ' Serien', p.gewicht, p.rhythmus].filter(Boolean).join(' · '))}${p.keypoints ? `<br>Keypoints: ${esc(p.keypoints)}` : ''}</p>`).join('')}</div>` : ''}
+  else body = `${lu ? (lx ? `<div class="card"><b>Erklärung</b><div class="exb">${exBody(lx)}</div>${exLinks(lu, lx)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey. Öffnet in einem neuen Tab; braucht Internet.</p></div>`) : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<div class="small muted" style="margin-top:10px">${esc(p.st)}${p.faktor ? ' · ' + esc(p.faktor) : ''}</div>${athHtml(athData(p))}`).join('')}</div>` : ''}${norm(e.name) === 'swiss way warm up' && SWD ? `<div class="card"><b>Auswahl pro Training</b><p class="small">Beim Hinzufügen steht in der Beschreibung, welche Übungen des Swiss Way Warm-ups an diesem Tag dran sind (Teil 1 Sensorik, Teil 2 Bewegungsvorbereitung, Teil 3 Bewegungskontrolle passend zum Athletik-Schwerpunkt). Jedes Training bekommt eine andere Auswahl; im Training gibt es «Andere Auswahl».</p></div>` : ''}
     <div class="card"><label>🎒 Material (wird beim Hinzufügen ins Training übernommen)<input data-b="n:${esc(e.key)}:mat" value="${esc(nt.mat)}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
     <label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
     ${e.kind !== 'athletik' ? `<label>🧤 Goalie-Hinweis zu dieser Übung<textarea data-b="n:${esc(e.key)}:goalie" rows="2" placeholder="${esc(goalieFocus(e.kind, [...e.sps][0], [...e.efs][0]))}">${esc(nt.goalie)}</textarea></label>` : ''}
@@ -1300,7 +1397,7 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow']);
+const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'addI', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
@@ -1422,6 +1519,7 @@ function render() {
   else if (p[0] === 'team') html = p[1] === 'new' ? viewTeamForm() : p[2] === 'edit' ? viewTeamForm(p[1]) : viewTeam(p[1]);
   else if (p[0] === 't') {
     const t = getT(p[1]); tab = '/';
+    if (t) { const tmx = teamOf(t), spx = SYNC_ON && tmx && spOf(tmx.id); if (!(spx && spx.role === 'r')) swEnsure(t); }   // Swiss-Way-Beschreibung erzeugen (nicht bei «Nur lesen»)
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
     else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else html = viewEdit(t);
   } else if (p[0] === 'lib') {
@@ -1452,6 +1550,11 @@ addEventListener('hashchange', render);
 const curT = () => getT((location.hash.match(/#\/t\/([^/]+)/) || [])[1]);
 const A = {
   close: closeModal,
+  swNew(el) {   // Swiss Way Warm-up: andere Auswahl der Übungen, mit Rückgängig
+    const t = curT(), it = t && t.items.find(x => x.id === el.dataset.id); if (!it) return;
+    const old = { desc: it.desc, sw: it.sw }; swFill(it, t, Math.floor(Math.random() * 1e6)); touch(t); render();
+    toast('Andere Auswahl erstellt', 'Rückgängig', () => { it.desc = old.desc; if (old.sw) it.sw = old.sw; else delete it.sw; touch(t); render(); });
+  },
   crumbStage(el) { DB.stage = el.dataset.k; save(); },   // Brotkrumen «RTP › D-Junioren»: Stufe merken, der Link öffnet die Stufenübersicht
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
@@ -1651,7 +1754,7 @@ function onInput(ev) {
     if (k === 'g') { it.g[b] = v; if (b === 'mode' && v !== 'own') it.g.name = ''; } else it[b] = v;
     touch(t); if (b === 'min') $('#sum').innerHTML = sumHtml(t);
     if (k === 'i' && (b === 'desc' || b === 'coach')) {   // eigene Notizen/Keypoints bei der Übung merken (nicht bei eigenen Übungen und Athletik: dort ist das Feld der Übungstext selbst)
-      const key = matNoteKey(it), e = key && libGet(key); if (e && e.src === 'rtp' && it.type !== 'athletik') { const n = DB.notes[key] = DB.notes[key] || {}; n[b] = v; n.u = Date.now(); if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
+      const key = matNoteKey(it), e = key && libGet(key); if (e && e.src === 'rtp' && it.type !== 'athletik' && !isSw(it)) { const n = DB.notes[key] = DB.notes[key] || {}; n[b] = v; n.u = Date.now(); if (!n.desc && !n.goalie && !n.mat && !n.coach) delete DB.notes[key]; save(); }
     }
     if (k === 'i' && b === 'mat') {
       if ($('#mat')) $('#mat').innerHTML = matCard(t, 'edit');
