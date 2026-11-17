@@ -774,7 +774,7 @@ function viewTeam(id) {
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''}" href="#/t/${t.id}"><div class="row"><b>${esc(t.title || 'Ohne Titel')}</b><span class="muted">${total(t)}′</span></div><div class="muted small">${metaLine(t, false)}</div><div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
-  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button></div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><button class="btn" data-a="tshOpen" data-k="${tm.id}">Mannschaft teilen</button></div>
   ${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
@@ -894,6 +894,22 @@ function jsModal(tm, kind) {
 
 // Mannschaft teilen (Kopie weitergeben, kein Abgleich). Format: { v: 2, k: 'team', t: Trainings, m: [Mannschaft (+ players nur auf Wunsch)], c, n, s: { teamId: Saison-Einstellung } }
 const qrSvg = (url, msg) => { try { const q = qrcode(0, 'L'); q.addData(url, 'Byte'); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch (e) { return `<p class="small muted">${msg}</p>`; } };
+async function buildTeamShare() {
+  const o = S.tsh, tm = teamById(o.id); if (!tm) return;
+  const today = iso(new Date()), all = teamTrainings(tm), ts = o.which === 'none' ? [] : o.which === 'all' ? all : all.filter(t => !t.date || t.date >= today), c = [], n = {}, seen = new Set();
+  ts.forEach(t => t.items.forEach(it => { const cx = customOf(it); if (cx && !seen.has(cx.id)) { seen.add(cx.id); c.push(cx); } for (const k of [it.lib, matNoteKey(it)]) if (k && DB.notes[k]) n[k] = DB.notes[k]; }));
+  const data = { v: 2, k: 'team', t: ts.map(slim), m: [teamMeta(tm, o.pl)], c, n };
+  if (DB.seasons[tm.id]) data.s = { [tm.id]: JSON.parse(JSON.stringify(DB.seasons[tm.id])) };
+  const seq = buildTeamShare.n = (buildTeamShare.n || 0) + 1, url = appUrl() + '#i=' + await pack(data); if (seq !== buildTeamShare.n || !S.tsh) return;
+  S.share = { url, t: { title: tm.name }, data, file: `mannschaft-${norm(tm.name).replace(/ /g, '-')}.json`, text: 'Unihockey-Trainingsplaner, Mannschaft: ' + tm.name };
+  const up = all.filter(t => !t.date || t.date >= today).length;
+  modal(`<h2>«${esc(tm.name)}» teilen</h2><p class="small">Du gibst eine Kopie weiter: Mannschaft (Name, Stufe, Farbe, Trainingszeiten, Saison-Einstellung) und, wenn du willst, ihre Trainings samt den eigenen Übungen und Notizen darin. Anwesenheiten gehen nie mit. Danach gleicht sich nichts mehr ab; wer etwas ändert, teilt neu.</p>
+    <label>Trainings mitgeben<select data-b="tsh:which">${opt('up', `Nur kommende (${up})`, o.which)}${opt('all', `Alle (${all.length})`, o.which)}${opt('none', 'Keine', o.which)}</select></label>
+    <label class="chk"><input type="checkbox" data-b="tsh:pl" ${o.pl ? 'checked' : ''}>Spielerliste mitgeben (Namen und J+S-Nummern)</label>
+    ${o.pl ? '<p class="small warn">Der Link enthält dann Personendaten, auch von Kindern. Schicke ihn nur direkt an die Person, die ihn braucht – nicht in Gruppenchats und nicht öffentlich.</p>' : ''}
+    <div class="qr">${qrSvg(url, 'Für einen QR-Code ist das zu umfangreich – nutze den Link oder die Datei.')}</div>
+    <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
+}
 
 // ---------- Ansicht: Mehr ----------
 let installEvt = null;
@@ -904,6 +920,7 @@ function viewMore() {
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
     <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
+  <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen nur auf diesem Gerät, es gibt keinen Server und kein Konto. Wenn du ein Training oder eine Mannschaft teilst, geht eine Kopie weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern und Anwesenheiten gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nur mit, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst (Anwesenheiten nie), und sie sind in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p></div>
   <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist nur auf diesem Gerät gespeichert.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
   <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
 }
@@ -937,6 +954,16 @@ function importData(d) {
   if (!d || !Array.isArray(d.t)) { toast('Keine gültigen Trainingsdaten'); return; }
   S.imp = d;
   const dup = d.t.filter(t => getT(t.id)).length, meta = {}; (d.m || []).forEach(m => { if (m && m.id) meta[m.id] = m; });
+  const m0 = d.k === 'team' && d.m && d.m[0] && d.m[0].name ? d.m[0] : null;
+  if (m0) {   // geteilte Mannschaft
+    const byId = teamById(m0.id), byName = byId || teamByName(m0.name), np = Array.isArray(m0.players) ? m0.players.length : 0;
+    modal(`<h2>Mannschaft importieren?</h2><p><b>${teamDot({ color: m0.color || '#6b7785' })}${esc(m0.name)}</b> <span class="muted small">${esc((stageById(m0.stage) || {}).name || '')}</span></p>
+      <p class="small">${byId ? 'Diese Mannschaft hast du schon. Name, Trainingszeiten und Saison-Einstellung werden aktualisiert.' : byName ? 'Du hast schon eine Mannschaft mit diesem Namen. Ihre Einstellungen bleiben; Trainings und Spielerliste werden dort ergänzt.' : 'Die Mannschaft wird neu angelegt.'}</p>
+      <ul class="small"><li>${d.t.length ? `${d.t.length} Training${d.t.length === 1 ? '' : 's'}${dup ? ` (${dup} schon vorhanden – werden durch die importierte Version ersetzt; deine Anwesenheiten dazu bleiben)` : ''}` : 'Keine Trainings'}</li>
+      <li>${np ? `<b>Spielerliste enthalten:</b> ${np} Person${np === 1 ? '' : 'en'} (mit Namen und J+S-Nummern)${byName ? ', wird mit deiner Liste zusammengeführt' : ''}` : 'Keine Spielerliste enthalten'}</li>${d.c && d.c.length ? `<li>${d.c.length} eigene Übung${d.c.length === 1 ? '' : 'en'}</li>` : ''}</ul>
+      <div class="row"><button class="btn pri" data-a="impOk">Importieren</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+    return;
+  }
   const newTm = [...new Set(d.t.map(t => String(t.team || (meta[t.teamId] || {}).name || '').trim()).filter(n => n && !teamByName(n)))];
   modal(`<h2>Importieren?</h2><ul>${d.t.slice(0, 12).map(t => `<li>${esc(t.title)}${t.date ? ` <span class="muted small">${fmtDate(t.date)}</span>` : ''}</li>`).join('')}${d.t.length > 12 ? `<li>… und ${d.t.length - 12} weitere</li>` : ''}</ul>
     ${d.c && d.c.length ? `<p class="small">+ ${d.c.length} eigene Übungen und Notizen</p>` : ''}${newTm.length ? `<p class="small">Neue Mannschaft${newTm.length > 1 ? 'en' : ''} wird angelegt: ${newTm.map(n => '«' + esc(n) + '»').join(', ')}</p>` : ''}${dup ? `<p class="small warn">${dup} davon schon vorhanden – wird durch die importierte Version ersetzt.</p>` : ''}
@@ -1135,6 +1162,7 @@ const A = {
   },
   awExport(el) { jsModal(teamById(el.dataset.tm), el.dataset.k); },
   awDownload() { const r = S.jsx; if (!r || !r.rows) return; saveBlob(r.name, new Blob([r.text], { type: 'text/csv;charset=utf-8' })); toast('Datei heruntergeladen'); },
+  tshOpen(el) { S.tsh = { id: el.dataset.k, which: 'up', pl: false }; buildTeamShare(); },
   share() { shareTraining(curT()); },
   print() { print(); },
   shNative() { const { url, t, text } = S.share; if (navigator.share) navigator.share({ title: t.title, text, url }).catch(() => { }); else A.shCopy(); },
