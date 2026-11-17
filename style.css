@@ -112,3 +112,19 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 @media print { .expl { display: none; } }
 .expl.open { border-top: 0; margin: 0 0 8px; padding: 10px 12px; background: var(--bg); border-radius: 10px; }
 .cxbox { background: var(--bg); border-radius: 10px; padding: 10px 12px; margin: 8px 0; } .cxbox textarea { background: var(--card); }
+
+/* Spielerliste, Anwesenheit, J+S */
+.attlink { display: flex; align-items: center; gap: 10px; min-height: 48px; } .attlink b { flex: 1; }
+.att { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 62px; padding: 8px 14px; margin: 8px 0; border-radius: 14px; border: 2px solid var(--line); background: var(--card); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.att .box { flex: none; width: 34px; height: 34px; border-radius: 9px; border: 2px solid var(--muted); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.25rem; }
+.att.on { border-color: var(--pri); } .att.on .box { background: var(--pri); border-color: var(--pri); color: var(--pri-t); } .att.on .box::after { content: '✓'; }
+.att b { font-size: 1.05rem; }
+.prow { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 46px; padding: 6px 2px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.prow .pn { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tscroll { overflow-x: auto; margin: 10px 0 6px; border: 1px solid var(--line); border-radius: 10px; max-width: 100%; }
+.aw { border-collapse: collapse; font-size: .84rem; width: max-content; min-width: 100%; }
+.aw th, .aw td { padding: 7px 9px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.aw thead th { font-weight: 600; color: var(--muted); } .aw tbody th { position: sticky; left: 0; z-index: 1; background: var(--card); text-align: left; font-weight: 600; }
+.aw thead th:first-child { position: sticky; left: 0; background: var(--card); text-align: left; z-index: 1; } .aw td.y { color: var(--pri); font-weight: 800; } .aw td.n, .aw td.x { color: var(--muted); } .aw td.tot { font-variant-numeric: tabular-nums; }
+.chk { display: flex; align-items: center; gap: 10px; font-size: .92rem; color: var(--text); margin: 12px 0 4px; } .chk input { width: 24px; height: 24px; min-height: 0; margin: 0; flex: none; }
+.warnbox { border-left: 4px solid var(--danger); background: var(--bg); padding: 10px 12px; border-radius: 10px; margin: 10px 0; font-size: .92rem; }

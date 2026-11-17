@@ -18,7 +18,7 @@ const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } cat
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); };
 addEventListener('pagehide', flush);
 
-const S = { open: new Set(), pick: null, seed: { team: '', date: '' }, flow: null, done: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null, expl: new Set() };
+const S = { open: new Set(), pick: null, seed: { team: '', date: '' }, flow: null, done: null, lib: { q: '', kind: '', stage: '', sp: '', limit: 60 }, run: null, form: null, expl: new Set(), tsec: new Set() };
 
 // ---------- Typen & Farben ----------
 const TYPES = {
@@ -89,6 +89,31 @@ function applyTeam(t, tm, sess, fresh) {
 }
 const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; tm.sessions = teamSessions(tm); DB.teams.push(tm); return tm; };
 const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); return x && x.id === tm.id; });
+
+// Spielerliste (optional, Datensparsamkeit: nur diese Felder): tm.players = [{ id, first, last, jsnr (nur Ziffern), rn (Rückennummer), role: 'T' Teilnehmer/in | 'L' Leiter/in }].
+// Anwesenheit am Training: t.att = { <playerId>: 1 }, t.jsType = 'Training' | 'Wettkampf' | 'Trainingstag' (fehlt = Training). Beides bleibt auf dem Gerät: slim() entfernt t.att beim Teilen, teamMeta() lässt players weg.
+const playersOf = tm => Array.isArray(tm && tm.players) ? tm.players : [];
+const pName = p => [p.first, p.last].filter(Boolean).join(' ') || 'Ohne Namen';
+const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), jsnr: String(p.jsnr || '').replace(/\D/g, '').slice(0, 12), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T' });
+const JS_TYPES = ['Training', 'Wettkampf', 'Trainingstag'];
+const jsTypeOf = t => JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
+const attOf = t => t.att && typeof t.att === 'object' ? t.att : {};
+const attCount = (t, tm) => playersOf(tm).filter(p => attOf(t)[p.id]).length;
+const teamMeta = (tm, withPlayers) => { const c = JSON.parse(JSON.stringify(tm)); if (!withPlayers) delete c.players; return c; };
+function mergePlayers(tm, list) {   // Spielerliste per Spieler-id zusammenführen
+  tm.players = playersOf(tm);
+  for (const p0 of list) { if (!p0 || !(p0.first || p0.last)) continue; const p = cleanPlayer(p0), i = tm.players.findIndex(x => x.id === p.id); if (i >= 0) tm.players[i] = p; else tm.players.push(p); }
+}
+// Mehrfacheingabe: eine Person pro Zeile, «Vorname Name» oder «Name, Vorname», optional J+S-Nummer (5–12 Ziffern) am Zeilenende
+function parsePlayers(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.replace(/\t/g, ' ').replace(/;/g, ',').trim()).filter(Boolean).map(l => {
+    let nr = ''; const m = l.match(/^(.*?)[\s,]+(\d{5,12})$/); if (m) { l = m[1]; nr = m[2]; }
+    l = l.replace(/[,\s]+$/, '').trim(); let first, last;
+    if (l.includes(',')) { const [a, ...r] = l.split(','); last = a.trim(); first = r.join(' ').trim(); }
+    else { const w = l.split(/\s+/); first = w.shift() || ''; last = w.join(' '); }
+    return { first, last, jsnr: nr };
+  }).filter(p => p.first || p.last);
+}
 function migrate() {
   if (!Array.isArray(DB.teams)) DB.teams = []; if (!DB.seasons || typeof DB.seasons !== 'object') DB.seasons = {};
   let ch = false;
@@ -265,7 +290,7 @@ function removeTrainings(list) {
   toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); save(); render(); });
 }
 function modal(html) { $('#modal').innerHTML = `<div class="backdrop" data-a="close"></div><div class="sheet">${html}</div>`; $('#modal').className = 'on'; }
-function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; }
+function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; }
 const go = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
 const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
@@ -338,7 +363,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>` + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, 'Bearbeiten · ' + esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}` + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -432,7 +457,7 @@ function viewRun(t) {
   const r = S.run, it = t.items[r.i], ty = TYPES[it.type] || TYPES.sonst, nx = t.items[r.i + 1];
   return `<div class="run" style="--c:${ty[1]}"><div class="row runtop"><a class="btn sm" href="#/t/${t.id}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
-    ${r.i === 0 && !r.started ? rtpSummary(t) + matCard(t) : ''}
+    ${r.i === 0 && !r.started ? rtpSummary(t) + matCard(t) + attLink(t) : ''}
     <h1 class="runname">${esc(it.name || ty[0])}</h1>
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
@@ -750,7 +775,7 @@ function viewTeam(id) {
   return head(tm.name, '/teams', `<a class="btn" href="#/team/${tm.id}/edit">Bearbeiten</a>`, 'Mannschaft · ' + esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button></div>
-  <h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
+  ${playersCard(tm)}${awSection(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
 function viewTeamForm(id) {
@@ -770,6 +795,105 @@ function viewTeamForm(id) {
     <p class="small muted">Diese Zeiten füllen neue Trainings (Datum → passende Einheit: Start, Ort, Dauer) und die Saisonplanung der Mannschaft vor. Zwei Einheiten am selben Tag sind möglich.</p>
     <button class="btn pri block" data-a="saveTeam">Speichern</button>${tm ? `<button class="btn danger block" data-a="delTeam" data-id="${tm.id}">Mannschaft löschen${n ? ` (${n} Trainings)` : ''}</button>` : ''}</div>`;
 }
+
+// ---------- Spielerliste, Anwesenheit, Export für J+S ----------
+const attLink = t => {
+  const tm = teamOf(t), pl = playersOf(tm).length;
+  return `<a class="card attlink" href="#/t/${t.id}/att"><b>👥 Anwesenheit</b><span class="muted small">${tm ? (pl ? attCount(t, tm) + ' von ' + pl + ' anwesend' : 'Spielerliste anlegen') : 'Mannschaft nötig'}</span><span class="muted">›</span></a>`;
+};
+const attSum = (t, tm) => `${attCount(t, tm)} von ${playersOf(tm).length} anwesend`;
+function viewAtt(t) {
+  const tm = teamOf(t), pl = playersOf(tm), hd = head('Anwesenheit', '/t/' + t.id, '', esc(t.title || 'Ohne Titel')) + `<div class="muted small">${metaLine(t, true)}</div>`;
+  if (!tm) return hd + `<div class="card empty"><p>Dieses Training gehört zu keiner Mannschaft. Wähle im Training eine Mannschaft, dann kannst du ihre Spieler*innen abhaken.</p><p><a class="btn pri" href="#/t/${t.id}">Zum Training</a> <a class="btn" href="#/teams">Mannschaften</a></p></div>`;
+  if (!pl.length) return hd + `<div class="card empty"><p>Für «${esc(tm.name)}» gibt es noch keine Spielerliste. Lege sie an, dann kannst du hier pro Training abhaken, wer da war.</p><p><button class="btn pri" data-a="toPlayers" data-k="${esc(tm.id)}">Zur Spielerliste</button></p></div>`;
+  return hd + `<div class="card"><label>J+S-Aktivitätstyp<select data-b="t:jsType">${JS_TYPES.map(k => opt(k, k, jsTypeOf(t))).join('')}</select></label><p class="small muted nomargin">Wird beim Export für J+S verwendet. Bei «Wettkampf» und «Trainingstag» bleiben Startzeit und Ort in der Datei leer.</p></div>
+  <div class="row sum"><b id="attn">${attSum(t, tm)}</b><button class="btn sm" data-a="attAll">Alle anwesend</button><button class="btn sm" data-a="attNone">Keine</button></div>
+  ${pl.map(p => `<button class="att ${attOf(t)[p.id] ? 'on' : ''}" data-a="attTog" data-id="${esc(p.id)}" aria-pressed="${attOf(t)[p.id] ? 'true' : 'false'}"><span class="box"></span><span class="grow"><b>${esc(pName(p))}</b>${p.rn || p.role === 'L' ? `<br><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>` : ''}</span></button>`).join('')}
+  <p class="small muted">Die Anwesenheit bleibt auf diesem Gerät und wird beim Teilen des Trainings nicht mitgegeben.</p>`;
+}
+
+function playersCard(tm) {
+  const l = playersOf(tm);
+  return `<details class="card tsec" data-k="pl" ${S.tsec.has('pl') ? 'open' : ''}><summary><b>Spielerliste</b> <span class="muted small">${l.length ? l.length + (l.length === 1 ? ' Person' : ' Personen') : 'noch leer'}</span></summary>
+    <p class="small muted">Pro Person nur Name, J+S-Personennummer, Rolle und Rückennummer. Die Liste bleibt auf diesem Gerät und geht beim Teilen eines Trainings nie mit.</p>
+    ${l.map(p => `<button class="prow" data-a="plEdit" data-tm="${esc(tm.id)}" data-id="${esc(p.id)}"><span class="pn">${esc(pName(p))}</span><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>${p.jsnr ? `<span class="small muted">${esc(p.jsnr)}</span>` : '<span class="small warn">ohne J+S-Nr.</span>'}<span class="muted">›</span></button>`).join('')}
+    ${l.length ? '' : '<p class="small muted">Noch niemand erfasst. Du kannst dich selbst als Leiter/in eintragen.</p>'}
+    <div class="row wrap" style="margin-top:10px"><button class="btn" data-a="plAdd" data-tm="${esc(tm.id)}" data-role="T">+ Spieler/in</button><button class="btn" data-a="plAdd" data-tm="${esc(tm.id)}" data-role="L">+ Leiter/in</button><button class="btn" data-a="plBulk" data-tm="${esc(tm.id)}">Mehrere einfügen</button></div></details>`;
+}
+function playerModal() {
+  const f = S.pf;
+  modal(`<h2>${f.id ? 'Person bearbeiten' : 'Person hinzufügen'}</h2>
+    <div class="grid2"><label>Vorname<input data-b="pl:first" value="${esc(f.first)}" autocomplete="off"></label><label>Name<input data-b="pl:last" value="${esc(f.last)}" autocomplete="off"></label>
+    <label>J+S-Personennummer<input inputmode="numeric" data-b="pl:jsnr" value="${esc(f.jsnr)}" placeholder="z.B. 123456789" autocomplete="off"></label><label>Rückennummer (optional)<input inputmode="numeric" data-b="pl:rn" value="${esc(f.rn)}" autocomplete="off"></label></div>
+    <label>Rolle<select data-b="pl:role">${opt('T', 'Teilnehmer/in', f.role)}${opt('L', 'Leiter/in', f.role)}</select></label>
+    <p class="small muted">Die J+S-Personennummer brauchst du nur für den Export an J+S. Es werden bewusst keine weiteren Personendaten gespeichert (kein Geburtsdatum, keine AHV-Nummer, keine Adresse).</p>
+    <div class="row wrap"><button class="btn pri" data-a="plSave">Speichern</button>${f.id ? '<button class="btn danger" data-a="plDel">Entfernen</button>' : ''}<button class="btn" data-a="close">Abbrechen</button></div>`);
+}
+function bulkModal() {
+  const b = S.pb, tm = teamById(b.tm), prev = b.prev;
+  modal(`<h2>Mehrere Personen einfügen</h2><p class="small">Eine Person pro Zeile: «Vorname Name» oder «Name, Vorname», optional mit J+S-Personennummer am Zeilenende. Du kannst eine Liste aus Excel oder einem Dokument einfügen.</p>
+    <textarea rows="7" data-b="pb:text" placeholder="Anna Muster 123456789&#10;Beispiel, Ben&#10;Chiara Probe" autocomplete="off">${esc(b.text)}</textarea>
+    <label class="chk"><input type="checkbox" data-b="pb:leader" ${b.leader ? 'checked' : ''}>Als Leiter/in eintragen</label>
+    ${prev ? `<p class="small nomargin"><b>${prev.length} Person${prev.length === 1 ? '' : 'en'} erkannt</b> – prüfe Vor- und Nachname:</p><ul class="small">${prev.slice(0, 40).map(p => `<li>${esc(p.first)} <b>${esc(p.last)}</b>${p.jsnr ? ' · ' + esc(p.jsnr) : ' · <span class="warn">ohne Nr.</span>'}${p.dup ? ' <span class="muted">(schon in der Liste, wird übersprungen)</span>' : ''}</li>`).join('')}${prev.length > 40 ? `<li>… und ${prev.length - 40} weitere</li>` : ''}</ul>` : ''}
+    <div class="row wrap"><button class="btn ${prev ? '' : 'pri'}" data-a="pbPrev">Prüfen</button>${prev ? `<button class="btn pri" data-a="pbAdd">${prev.filter(p => !p.dup).length} hinzufügen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div>`);
+}
+const isDupPlayer = (tm, p) => playersOf(tm).some(x => (x.first + ' ' + x.last).trim().toLowerCase() === (p.first + ' ' + p.last).trim().toLowerCase() || (p.jsnr && x.jsnr === p.jsnr));
+
+// Anwesenheit / J+S auf der Mannschaftsseite
+function awRange(tm) {
+  const s = DB.seasons[tm.id], def = s ? seasonStart(s, seasonYearNow()) : seasonDefault(seasonYearNow());
+  if (!S.aw || S.aw.id !== tm.id) S.aw = { id: tm.id, from: '', to: '' };
+  return { from: S.aw.from || def, to: S.aw.to || iso(new Date()) };
+}
+const awTrainings = (tm, r) => teamTrainings(tm).filter(t => t.date && t.date >= r.from && t.date <= r.to).sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || ''));
+const dmy = s => { const [y, m, d] = s.split('-'); return `${d}.${m}.${y}`; };
+function awSection(tm) {
+  const pl = playersOf(tm), r = awRange(tm), ts = awTrainings(tm, r), rec = ts.filter(t => attCount(t, tm) > 0);
+  let body;
+  if (!pl.length) body = '<p class="small muted">Lege zuerst die Spielerliste an. Dann hakst du in jedem Training ab, wer da war, und siehst hier die Übersicht.</p>';
+  else body = `<div class="grid2"><label>Von<input type="date" data-b="aw:from" data-r="1" value="${esc(r.from)}"></label><label>Bis<input type="date" data-b="aw:to" data-r="1" value="${esc(r.to)}"></label></div>
+    ${ts.length ? `<div class="tscroll"><table class="aw"><thead><tr><th>Name</th><th>Anwesend</th>${ts.map(t => `<th><a href="#/t/${t.id}/att" aria-label="Anwesenheit ${esc(fmtDate(t.date))}">${dm(pd(t.date))}</a></th>`).join('')}</tr></thead><tbody>
+      ${pl.map(p => { const n = rec.filter(t => attOf(t)[p.id]).length; return `<tr><th>${esc(pName(p))}</th><td class="tot">${rec.length ? n + '/' + rec.length + ' · ' + Math.round(100 * n / rec.length) + '%' : '–'}</td>${ts.map(t => attCount(t, tm) ? `<td class="${attOf(t)[p.id] ? 'y' : 'n'}">${attOf(t)[p.id] ? '✓' : '·'}</td>` : '<td class="x">–</td>').join('')}</tr>`; }).join('')}</tbody></table></div>
+      <p class="small muted">${ts.length} Training${ts.length === 1 ? '' : 's'} im Zeitraum, bei ${rec.length} ist die Anwesenheit erfasst («–» = nicht erfasst, zählt nicht mit). Tippe auf ein Datum, um die Anwesenheit zu bearbeiten.</p>` : '<p class="small muted">In diesem Zeitraum gibt es keine Trainings dieser Mannschaft.</p>'}
+    <div class="col"><button class="btn pri" data-a="awExport" data-tm="${esc(tm.id)}" data-k="awk">AWK für J+S exportieren (CSV)</button><button class="btn" data-a="awExport" data-tm="${esc(tm.id)}" data-k="act">Aktivitäten exportieren (CSV)</button></div>
+    <p class="small muted">Für die Abrechnung bei Jugend+Sport (Import in die NDS). Vor dem Download siehst du, was auffällt.</p>`;
+  return `<details class="card tsec" data-k="aw" ${S.tsec.has('aw') ? 'open' : ''}><summary><b>Anwesenheit / J+S</b></summary>${body}</details>`;
+}
+
+// Export für J+S: CSV nach den Vorlagen von jugendundsport.ch (Datenimport): Semikolon, UTF-8 mit BOM, CRLF, feste Kopfzeile
+const JS_AWK = 'PERSONENNUMMER;FUNKTION;DATUM;AKTIVITAETSTYP;ZEIT;DAUER;ORT', JS_ACT = 'AKTIVITAETSTYP;DATUM;ZEIT;DAUER;ORT;FOKUS';
+const JS_DUR = { Training: [60, 75, 90, 120, 150, 180, 210, 240, 270, 300], Trainingstag: [240, 300] };
+const csvCell = v => { v = String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); return /[;"]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+const jsMin = t => total(t) || +t.min || 0;   // Dauer wie im Kopf des Trainings (Summe der Blöcke), sonst die geplante Dauer
+function jsExport(tm, kind) {
+  const r = awRange(tm), ts = awTrainings(tm, r), pl = playersOf(tm), awk = kind === 'awk', rows = [], issues = [], noNr = new Set(), used = new Set(); let wk = false;
+  ts.forEach(t => {
+    const type = jsTypeOf(t), min = jsMin(t), lab = `${fmtDate(t.date)} «${t.title || 'Ohne Titel'}»`, tr = type === 'Training';
+    if (awk && !attCount(t, tm)) { issues.push(`${lab}: Anwesenheit nicht erfasst – nicht in der Datei.`); return; }
+    if (tr) { const miss = [!t.start && 'Startzeit', !t.ort && 'Ort'].filter(Boolean); if (miss.length) { issues.push(`${lab}: ${miss.join(' und ')} fehlt (bei «Training» Pflicht) – nicht in der Datei. Ergänze es im Training und exportiere nochmals.`); return; } }
+    if (type === 'Wettkampf') { if (!wk) issues.push('Wettkampf: J+S verlangt je nach Nutzergruppe eine Dauer oder keine. Prüfe das beim Import in der NDS.'); wk = true; }
+    else if (!min || !JS_DUR[type].includes(min)) issues.push(`${lab}: Dauer ${min || 'leer'} Min. – J+S akzeptiert je nach Sportart nur bestimmte Werte, z. B. 60, 75, 90. Der Wert steht trotzdem in der Datei.`);
+    const zeit = tr ? t.start : '', ort = tr ? t.ort : '', base = [dmy(t.date), type, zeit, min || '', ort];
+    if (awk) { pl.forEach(p => { if (!attOf(t)[p.id]) return; if (!p.jsnr) { noNr.add(pName(p)); return; } rows.push([p.jsnr, p.role === 'L' ? 'Leiter/in' : 'Teilnehmer/in', ...base]); used.add(t.id); }); }
+    else { rows.push([type, dmy(t.date), zeit, min || '', ort, '']); used.add(t.id); }
+  });
+  if (noNr.size) issues.unshift(`Ohne J+S-Personennummer, ihre Zeilen fehlen in der Datei: ${[...noNr].join(', ')}.`);
+  const text = '﻿' + [awk ? JS_AWK : JS_ACT, ...rows.map(x => x.map(csvCell).join(';'))].join('\r\n') + '\r\n';
+  return { kind, rows: rows.length, nt: used.size, issues, text, from: r.from, to: r.to, name: `${awk ? 'awk' : 'aktivitaeten'}_${norm(tm.name).replace(/ /g, '-') || 'mannschaft'}_${r.from}_${r.to}.csv` };
+}
+function jsModal(tm, kind) {
+  const r = S.jsx = jsExport(tm, kind), act = kind === 'act';
+  modal(`<h2>${act ? 'Aktivitäten für J+S' : 'Anwesenheitskontrolle (AWK) für J+S'}</h2>
+    ${act ? '<div class="warnbox"><b>Achtung:</b> Beim Import von Aktivitäten in der NDS gehen alle bereits im Kurs erfassten Aktivitäten samt Anwesenheiten verloren (Angabe des BASPO). Das BASPO empfiehlt, den Import erst nach Abschluss des Kurses zu machen und nicht parallel in der NDS und anderswo zu verwalten.</div>' : ''}
+    <p>${r.rows ? `<b>${r.rows} Zeile${r.rows === 1 ? '' : 'n'}</b> aus ${r.nt} Training${r.nt === 1 ? '' : 's'}, ${dmy(r.from)} bis ${dmy(r.to)}.` : '<b>Für diesen Zeitraum gibt es nichts zu exportieren.</b>'}</p>
+    ${r.issues.length ? `<div class="gbox"><b>Das fällt auf</b><ul class="small">${r.issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '<p class="small muted">Beim Prüfen ist nichts aufgefallen.</p>'}
+    <p class="small"><b>Reihenfolge in der NDS:</b> zuerst die Personen, dann die Aktivitäten, dann die Anwesenheitskontrolle. Personen und Aktivitäten müssen im Kurs schon erfasst sein. Importiere erst nach Kursende.</p>
+    <p class="small muted">Die Datei enthält J+S-Personennummern – gib sie nur an J+S weiter. Ob die NDS sie annimmt, zeigt sich erst beim Import; hier lässt sich das nicht vorab prüfen.</p>
+    <div class="row wrap"><button class="btn pri" data-a="awDownload" ${r.rows ? '' : 'disabled'}>Herunterladen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+}
+
+// Mannschaft teilen (Kopie weitergeben, kein Abgleich). Format: { v: 2, k: 'team', t: Trainings, m: [Mannschaft (+ players nur auf Wunsch)], c, n, s: { teamId: Saison-Einstellung } }
+const qrSvg = (url, msg) => { try { const q = qrcode(0, 'L'); q.addData(url, 'Byte'); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch (e) { return `<p class="small muted">${msg}</p>`; } };
 
 // ---------- Ansicht: Mehr ----------
 let installEvt = null;
@@ -798,14 +922,14 @@ async function unpack(s) {
   if (s[0] === 'z') bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   return JSON.parse(new TextDecoder().decode(bytes));
 }
-const slim = t => { const c = JSON.parse(JSON.stringify(t)); c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };
-const download = (name, obj) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj)], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
+const slim = t => { const c = JSON.parse(JSON.stringify(t)); delete c.att; c.items.forEach(i => { for (const k of ['desc', 'coach']) if (!i[k]) delete i[k]; }); return c; };   // Anwesenheit (t.att) bleibt auf dem Gerät
+const saveBlob = (name, blob) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
+const download = (name, obj) => saveBlob(name, new Blob([JSON.stringify(obj)], { type: 'application/json' }));
 const appUrl = () => location.origin + location.pathname;
 async function shareTraining(t) {
-  const tm = teamOf(t), m = tm ? [tm] : [], url = appUrl() + '#i=' + await pack({ v: 1, t: [slim(t)], m });
-  let qr = '';
-  try { const q = qrcode(0, 'L'); q.addData(url, 'Byte'); q.make(); qr = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); } catch (e) { qr = '<p class="small muted">Für einen QR-Code ist dieses Training zu umfangreich – nutze den Link oder die Datei.</p>'; }
-  S.share = { url, t, m };
+  const tm = teamOf(t), m = tm ? [teamMeta(tm, false)] : [], data = { v: 1, t: [slim(t)], m }, url = appUrl() + '#i=' + await pack(data);
+  const qr = qrSvg(url, 'Für einen QR-Code ist dieses Training zu umfangreich – nutze den Link oder die Datei.');
+  S.share = { url, t, data, file: `training-${norm(t.title).replace(/ /g, '-')}.json`, text: 'Unihockey-Training: ' + t.title };
   modal(`<h2>«${esc(t.title)}» teilen</h2><p class="small">Die Empfängerin öffnet den Link oder scannt den Code – das Training wird in ihre App importiert. Es findet keine laufende Synchronisation statt; bei Änderungen einfach nochmals teilen.</p>
     <div class="qr">${qr}</div><div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
 }
@@ -820,11 +944,30 @@ function importData(d) {
 }
 function doImport() {
   const d = S.imp; S.imp = null;
-  const meta = {}; (d.m || []).forEach(m => { if (m && m.id && m.name) { meta[m.id] = m; if (!teamById(m.id) && !teamByName(m.name)) { const n = mkTeam(m.name, m.stage); Object.assign(n, { color: m.color || n.color, ort: m.ort || '', time: m.time || '', days: Array.isArray(m.days) ? m.days : n.days, min: +m.min || 0, id: m.id }); n.sessions = Array.isArray(m.sessions) ? m.sessions.map(s => ({ ...s })) : legacySessions(n); } } });
-  for (const t of d.t) { if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta); const i = DB.trainings.findIndex(x => x.id === t.id); if (i >= 0) DB.trainings[i] = t; else DB.trainings.push(t); }
+  const meta = {}, isTeam = d.k === 'team'; let shared = null;
+  (d.m || []).forEach(m => {
+    if (!m || !m.id || !m.name) return; meta[m.id] = m;
+    let tm = teamById(m.id); const byId = !!tm; if (!tm) tm = teamByName(m.name);
+    if (!tm) { tm = mkTeam(m.name, m.stage); Object.assign(tm, { color: m.color || tm.color, ort: m.ort || '', time: m.time || '', days: Array.isArray(m.days) ? m.days : tm.days, min: +m.min || 0, id: m.id }); tm.sessions = Array.isArray(m.sessions) ? m.sessions.map(s => ({ ...s })) : legacySessions(tm); if (isTeam && d.s && d.s[m.id]) DB.seasons[tm.id] = JSON.parse(JSON.stringify(d.s[m.id])); }
+    else if (isTeam && byId) {   // schon vorhanden: Name, Stufe, Farbe, Ort, Trainingszeiten und Saison aktualisieren
+      if (!DB.teams.some(x => x.id !== tm.id && x.name.trim().toLowerCase() === String(m.name).trim().toLowerCase())) tm.name = m.name;
+      Object.assign(tm, { stage: m.stage || tm.stage, color: m.color || tm.color, ort: m.ort || '' }); if (Array.isArray(m.sessions)) tm.sessions = m.sessions.map(s => ({ ...s })); mirrorLegacy(tm);
+      if (d.s && d.s[m.id]) DB.seasons[tm.id] = JSON.parse(JSON.stringify(d.s[m.id]));
+      teamTrainings(tm).forEach(t => setTeam(t, tm));
+    }
+    if (Array.isArray(m.players)) mergePlayers(tm, m.players);
+    if (isTeam && !shared) shared = tm;
+  });
+  for (const t of d.t) {
+    if (!t.id || !Array.isArray(t.items)) continue; resolveTeam(t, meta);
+    const i = DB.trainings.findIndex(x => x.id === t.id);
+    if (i >= 0) { const o = DB.trainings[i]; if (!t.att && o.att) t.att = o.att; if (!t.jsType && o.jsType) t.jsType = o.jsType; DB.trainings[i] = t; } else DB.trainings.push(t);   // eigene Anwesenheit bleibt erhalten
+  }
   for (const c of d.c || []) { const i = DB.custom.findIndex(x => x.id === c.id); if (i >= 0) DB.custom[i] = c; else DB.custom.push(c); }
   if (d.n) DB.notes = { ...d.n, ...DB.notes };
-  LIB = null; flush(); closeModal(); toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
+  LIB = null; flush(); closeModal();
+  if (shared) { toast(`«${shared.name}» importiert (${d.t.length} Training${d.t.length === 1 ? '' : 's'})`); go('/team/' + shared.id); return; }
+  toast(`${d.t.length} Training(s) importiert`); go(d.t.length === 1 ? `/t/${d.t[0].id}` : '/');
 }
 
 // ---------- Router ----------
@@ -852,7 +995,7 @@ function render() {
   else if (p[0] === 't') {
     const t = getT(p[1]); tab = '/';
     if (!t) html = head('Training', '/') + '<p class="muted center">Training nicht gefunden.</p>';
-    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else html = viewEdit(t);
+    else if (p[2] === 'run') { html = viewRun(t); run = true; } else if (p[2] === 'view') html = viewRead(t); else if (p[2] === 'att') html = viewAtt(t); else html = viewEdit(t);
   } else if (p[0] === 'lib') {
     if (p[1] === 'new') html = viewLibForm(); else if (p[1] === 'edit') html = viewLibForm(p[2]);
     else if (p[1] === 'x') { const e = libGet(p.slice(2).join('/')); html = e ? viewLibItem(e) : head('Übung', '/lib') + '<p class="muted center">Übung nicht gefunden.</p>'; }
@@ -925,7 +1068,7 @@ const A = {
   addI() { const t = curT(), it = mkItem('gp', '', 15); it.g.text = goalieFocus('gp', t.sp, t.ef, t.stage); t.items.push(it); S.open.add(it.id); touch(t); render(); },
   addG() { const t = curT(); S.pick = t.id; S.lib.kind = 'goalie'; S.lib.stage = t.stage; S.lib.sp = ''; go('/lib'); },
   pick() { const t = curT(); S.pick = t.id; S.lib.stage = t.stage; if (S.lib.kind === 'goalie') S.lib.kind = ''; go('/lib'); },
-  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
+  dupT() { const t = curT(), c = JSON.parse(JSON.stringify(t)); c.id = uid(); delete c.att; c.title += ' (Kopie)'; c.items.forEach(i => i.id = uid()); c.updated = Date.now(); DB.trainings.push(c); save(); toast('Dupliziert'); go(`/t/${c.id}`); },
   delT() { const t = curT(); removeTrainings([t]); go('/'); },
   toastAct() { const fn = toast.fn; toast.fn = null; $('#toast').className = ''; fn && fn(); },
   teamF(el) { S.team = el.dataset.k; render(); },
@@ -961,11 +1104,42 @@ const A = {
     const ids = new Set((S.done && S.done.undo) || []), n = DB.trainings.filter(t => ids.has(t.id)).length;
     DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); S.done = null; save(); toast(`${n} Trainings zurückgenommen`); render();
   },
+  toPlayers(el) { S.tsec.add('pl'); closeModal(); go('/team/' + el.dataset.k); },
+  attTog(el) {
+    const t = curT(), id = el.dataset.id; t.att = attOf(t); if (t.att[id]) delete t.att[id]; else t.att[id] = 1;
+    touch(t); const on = !!t.att[id]; el.classList.toggle('on', on); el.setAttribute('aria-pressed', on ? 'true' : 'false'); const n = $('#attn'); if (n) n.textContent = attSum(t, teamOf(t));
+  },
+  attAll() { const t = curT(); t.att = attOf(t); playersOf(teamOf(t)).forEach(p => t.att[p.id] = 1); touch(t); render(); },
+  attNone() { const t = curT(), tm = teamOf(t); playersOf(tm).forEach(p => delete attOf(t)[p.id]); touch(t); render(); },
+  plAdd(el) { S.pf = { tm: el.dataset.tm, id: '', first: '', last: '', jsnr: '', rn: '', role: el.dataset.role === 'L' ? 'L' : 'T' }; playerModal(); },
+  plEdit(el) { const tm = teamById(el.dataset.tm), p = playersOf(tm).find(x => x.id === el.dataset.id); if (!p) return; S.pf = { tm: tm.id, ...p }; playerModal(); },
+  plSave() {
+    const f = S.pf, tm = teamById(f.tm); if (!tm) return;
+    if (!String(f.first).trim() && !String(f.last).trim()) return toast('Bitte einen Namen eingeben');
+    const p = cleanPlayer(f); tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
+    if (i >= 0) tm.players[i] = p; else tm.players.push(p);
+    S.tsec.add('pl'); save(); closeModal(); render(); toast('Gespeichert');
+  },
+  plDel() {
+    const f = S.pf, tm = teamById(f.tm), i = playersOf(tm).findIndex(x => x.id === f.id); if (i < 0) return;
+    const p = tm.players.splice(i, 1)[0]; save(); closeModal(); render();
+    toast(`«${pName(p)}» entfernt`, 'Rückgängig', () => { tm.players.splice(Math.min(i, tm.players.length), 0, p); save(); render(); });
+  },
+  plBulk(el) { S.pb = { tm: el.dataset.tm, text: '', leader: false, prev: null }; bulkModal(); },
+  pbPrev() { const b = S.pb, tm = teamById(b.tm); b.prev = parsePlayers(b.text).map(p => ({ ...p, dup: isDupPlayer(tm, p) })); bulkModal(); },
+  pbAdd() {
+    const b = S.pb, tm = teamById(b.tm), list = parsePlayers(b.text).filter(p => !isDupPlayer(tm, p)); if (!list.length) return toast('Nichts Neues zum Hinzufügen');
+    tm.players = playersOf(tm); const added = list.map(p => cleanPlayer({ ...p, role: b.leader ? 'L' : 'T' })); tm.players.push(...added);
+    S.tsec.add('pl'); S.pb = null; save(); closeModal(); render();
+    toast(`${added.length} Person${added.length === 1 ? '' : 'en'} hinzugefügt`, 'Rückgängig', () => { const ids = new Set(added.map(p => p.id)); tm.players = tm.players.filter(p => !ids.has(p.id)); save(); render(); });
+  },
+  awExport(el) { jsModal(teamById(el.dataset.tm), el.dataset.k); },
+  awDownload() { const r = S.jsx; if (!r || !r.rows) return; saveBlob(r.name, new Blob([r.text], { type: 'text/csv;charset=utf-8' })); toast('Datei heruntergeladen'); },
   share() { shareTraining(curT()); },
   print() { print(); },
-  shNative() { const { url, t } = S.share; if (navigator.share) navigator.share({ title: t.title, text: 'Unihockey-Training: ' + t.title, url }).catch(() => { }); else A.shCopy(); },
+  shNative() { const { url, t, text } = S.share; if (navigator.share) navigator.share({ title: t.title, text, url }).catch(() => { }); else A.shCopy(); },
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
-  shFile() { download(`training-${norm(S.share.t.title).replace(/ /g, '-')}.json`, { v: 1, t: [S.share.t], m: S.share.m }); },
+  shFile() { download(S.share.file, S.share.data); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
   expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams }); },
   impFile() { $('#file').click(); },
@@ -995,7 +1169,7 @@ const A = {
   runGo(el) { const t = curT(), i = +el.dataset.i; if (i < 0 || i >= t.items.length) return; S.run.started = true; runSet(t, i); runKeep(); render(); scrollTo(0, 0); },
   runExit() { wakeLock(false); S.run = null; runKeep(); },
 };
-document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
+document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('tsec')) ev.target.open ? S.tsec.add(ev.target.dataset.k) : S.tsec.delete(ev.target.dataset.k); else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;
@@ -1023,6 +1197,10 @@ function onInput(ev) {
   else if (k === 'n') { const key = el.dataset.b.slice(2, el.dataset.b.lastIndexOf(':')), f = el.dataset.b.slice(el.dataset.b.lastIndexOf(':') + 1); (DB.notes[key] = DB.notes[key] || {})[f] = v; if (!DB.notes[key].desc && !DB.notes[key].goalie && !DB.notes[key].mat && !DB.notes[key].coach) delete DB.notes[key]; save(); }
   else if (k === 'c') S.form[a] = v;
   else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { c[b] = v; syncCustom(c); } }
+  else if (k === 'pl') S.pf[a] = v;
+  else if (k === 'pb') S.pb[a] = a === 'leader' ? el.checked : v;
+  else if (k === 'aw') S.aw[a] = v;
+  else if (k === 'tsh') { S.tsh[a] = a === 'pl' ? el.checked : v; buildTeamShare(); return; }
   else if (k === 'f') { S.seed[a] = v; return; }
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
   else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
