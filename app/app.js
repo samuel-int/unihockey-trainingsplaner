@@ -489,6 +489,20 @@ function viewHome() {
     <p><button class="btn pri" data-a="newT" data-team="">Erstes Training erstellen</button> <a class="btn" href="#/teams">Mannschaft anlegen</a></p><p class="small muted">Du wählst, ob du mit dem RTP, der Saisonplanung oder einem leeren Training startest.</p></div>`);
 }
 
+// ---------- Blättern zwischen den Trainings ----------
+// Vorheriges/Nächstes innerhalb der Mannschaft des Trainings (ohne Mannschaft: unter den Trainings ohne Mannschaft), Reihenfolge wie die Liste: Datum, Startzeit, Titel, ohne Datum am Ende.
+// Ein gewählter Mannschaftsfilter (S.team) ist dabei immer die Mannschaft des geöffneten Trainings, sonst käme man aus der Mannschaft heraus.
+const tSort = (a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || (a.title || '').localeCompare(b.title || '', 'de', { numeric: true });
+function tNeighbors(t) {
+  const own = (teamOf(t) || {}).id || '', list = DB.trainings.filter(x => ((teamOf(x) || {}).id || '') === own).sort(tSort), i = list.findIndex(x => x.id === t.id);
+  return { prev: i > 0 ? list[i - 1] : null, next: i >= 0 && i < list.length - 1 ? list[i + 1] : null };
+}
+function tNav(t, view) {   // schmale Leiste in der Kopfzeile; bleibt in derselben Unteransicht (Editor oder Übersicht)
+  const { prev, next } = tNeighbors(t), sd = x => x.date ? fmtDate(x.date) : (x.title || 'ohne Datum');
+  const btn = (x, k, lab, none) => x ? `<a class="nv ${k}" href="#/t/${x.id}${view ? '/view' : ''}" data-a="tNav"><b>${lab}</b><small>${esc(sd(x))}</small></a>` : `<span class="nv ${k} dis" aria-disabled="true"><b>${lab}</b><small>${none}</small></span>`;
+  return `<div class="tnav">${btn(prev, 'p', '‹ Vorheriges', 'Erstes Training')}${btn(next, 'n', 'Nächstes ›', 'Letztes Training')}</div>`;
+}
+
 // ---------- Ansicht: Editor ----------
 function goalieSummary(g) {
   if (!g) return '';
@@ -523,7 +537,7 @@ function itemCard(t, it, i) {
 const sumHtml = t => { const s = total(t), d = s - (+t.min || 0); return `<b>${s}′</b> von ${esc(t.min)}′ geplant${d ? ` <span class="${d > 0 ? 'warn' : 'muted'}">(${d > 0 ? '+' : ''}${d}′)</span>` : ' ✓'}`; };
 function viewEdit(t) {
   S.pick = null;
-  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, esc(t.title || 'Ohne Titel')) + doneBar('/t/' + t.id) + reflPrevCard(t) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}${reflLink(t)}` + `
+  return head('Training', '/', `<a class="btn pri" href="#/t/${t.id}/run">▶ Start</a>`, esc(t.title || 'Ohne Titel'), tNav(t)) + doneBar('/t/' + t.id) + reflPrevCard(t) + rtpSummary(t, 'edit') + `<div id="mat">${matCard(t, 'edit')}</div>${attLink(t)}${reflLink(t)}` + `
   <div class="card"><input class="title" data-b="t:title" value="${esc(t.title)}" placeholder="Titel">
     <div class="grid2"><label>Datum<input type="date" data-b="t:date" value="${esc(t.date)}"></label><label>Startzeit${t.start ? ` (bis ${endTime(t)})` : ''}<input type="time" data-b="t:start" data-r="1" value="${esc(t.start)}"></label>
       <label>Mannschaft<select data-b="t:teamId" data-r="1">${opt('', 'Keine Mannschaft', teamOf(t) ? teamOf(t).id : t.team ? '__txt' : '')}${DB.teams.map(x => opt(x.id, x.name, teamOf(t) ? teamOf(t).id : '')).join('')}${!teamOf(t) && t.team ? opt('__txt', t.team + ' (keine Mannschaft)', '__txt') : ''}</select></label><label>Ort<input data-b="t:ort" value="${esc(t.ort)}" placeholder="Halle"></label>
@@ -593,7 +607,7 @@ function goalieHtml(g, full) {
 }
 function viewRead(t) {
   let m = 0;
-  return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`, esc(t.title || 'Ohne Titel')) + `
+  return head('Übersicht', `/t/${t.id}`, `<button class="btn" data-a="print">Drucken</button>`, esc(t.title || 'Ohne Titel'), tNav(t, true)) + `
   <div class="card"><h2 class="nomargin">${esc(t.title)}</h2><p class="muted">${[fmtDate(t.date), t.start && `${t.start}–${endTime(t)}`, t.team, t.ort, (stageById(t.stage) || {}).name, total(t) + ' Min.'].filter(Boolean).map(esc).join(' · ')}</p>
     ${t.sp ? `<p><b>${esc(t.sp)}</b>${t.ef ? ` <span class="muted">(${esc(t.ef)})</span>` : ''}</p>` : ''}${t.ziel ? `<p>Ziel: Die Spieler*innen können ${esc(t.ziel.replace(/^können /, ''))}</p>` : ''}
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
@@ -1690,6 +1704,7 @@ const A = {
     const old = { desc: it.desc, sw: it.sw }; swFill(it, t, Math.floor(Math.random() * 1e6)); touch(t); render();
     toast('Andere Auswahl erstellt', 'Rückgängig', () => { it.desc = old.desc; if (old.sw) it.sw = old.sw; else delete it.sw; touch(t); render(); });
   },
+  tNav() { S.open.clear(); },   // Link zum anderen Training: aufgeklappte Blöcke zurücksetzen (die Brotkrumen folgen der Adresse)
   crumbStage(el) { DB.stage = el.dataset.k; save(); },   // Brotkrumen «RTP › D-Junioren»: Stufe merken, der Link öffnet die Stufenübersicht
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
@@ -1947,6 +1962,21 @@ if (SYNC_ON) {   // Abgleich: beim Start, bei Rückkehr in die App, wenn wieder 
   addEventListener('online', spAuto); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') spAuto(); });
   setInterval(() => { if (document.visibilityState === 'visible') spAuto(); }, 60000); setTimeout(spAuto, 400);
 }
+// Wischen nach links/rechts im Editor und in der Übersicht blättert zum nächsten/vorherigen Training. Bewusst streng: nur ein deutlich waagrechter, schneller Strich,
+// nicht von Feldern, Knöpfen, Links, scrollbaren Leisten oder den Bildschirmrändern (Zurück-Geste) aus und nicht bei markiertem Text oder offenem Fenster.
+(() => {
+  let x0, y0, t0, ok = false;
+  document.addEventListener('touchstart', ev => {
+    const c = ev.touches[0]; ok = ev.touches.length === 1 && /^#\/t\/[^/]+(\/view)?$/.test(location.hash) && c.clientX > 28 && c.clientX < innerWidth - 28 && !$('#modal').classList.contains('on')
+      && !(ev.target.closest && ev.target.closest('input,textarea,select,button,a,summary,label,.crumbs,.chips,.tnav,.aw,[contenteditable]'));
+    x0 = c.clientX; y0 = c.clientY; t0 = Date.now();
+  }, { passive: true });
+  document.addEventListener('touchend', ev => {
+    if (!ok) return; ok = false; const c = ev.changedTouches[0], dx = c.clientX - x0, dy = c.clientY - y0;
+    if (Date.now() - t0 > 600 || Math.abs(dx) < 90 || Math.abs(dy) > Math.abs(dx) * 0.35 || String(getSelection()).length) return;
+    const a = $(dx < 0 ? '.tnav .n:not(.dis)' : '.tnav .p:not(.dis)'); if (a) { S.open.clear(); location.hash = a.getAttribute('href'); }
+  }, { passive: true });
+})();
 // UTP-Links: Verbindung schon beim Berühren des Knopfs aufbauen, damit die Erklärung schneller aufgeht.
 document.addEventListener('pointerdown', ev => {
   const a = ev.target.closest && ev.target.closest('a.utp'); if (!a) return;
