@@ -1955,6 +1955,7 @@ function render() {
   if (!run && S.run) { S.run = null; runKeep(); wakeLock(false); }
   document.body.classList.toggle('running', run);
   $('#app').innerHTML = html; roApply();
+  if (S.slide) { const k = S.slide, el = $('#app'); S.slide = null; el.classList.remove('sl-n', 'sl-p'); void el.offsetWidth; el.classList.add('sl-' + k); setTimeout(() => el.classList.remove('sl-' + k), 450); }   // kurze Wechsel-Animation beim Blättern zwischen Trainings
   const cb = $('.crumbs'); if (cb) cb.scrollLeft = cb.scrollWidth;   // Brotkrumen: bei Platzmangel die aktuelle Seite (rechts) sichtbar machen
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
   if (render.last !== r.path.split('/').slice(0, 3).join('/')) scrollTo(0, 0);
@@ -1976,7 +1977,7 @@ const A = {
     const old = { desc: it.desc, sw: it.sw }; swFill(it, t, Math.floor(Math.random() * 1e6)); touch(t); render();
     toast('Andere Auswahl erstellt', 'Rückgängig', () => { it.desc = old.desc; if (old.sw) it.sw = old.sw; else delete it.sw; touch(t); render(); });
   },
-  tNav(el, ev) { S.open.clear(); if (ev) { ev.preventDefault(); location.replace(el.getAttribute('href')); } },   // Blättern zum anderen Training ersetzt den Verlaufseintrag (Zurück führt dorthin, woher man ins Training kam); aufgeklappte Blöcke zurücksetzen
+  tNav(el, ev) { S.open.clear(); S.slide = el.classList.contains('n') ? 'n' : 'p'; if (ev) { ev.preventDefault(); location.replace(el.getAttribute('href')); } },   // Blättern zum anderen Training ersetzt den Verlaufseintrag (Zurück führt dorthin, woher man ins Training kam); aufgeklappte Blöcke zurücksetzen
   crumbStage(el) { DB.stage = el.dataset.k; save(); },   // Brotkrumen «RTP › D-Junioren»: Stufe merken, der Link öffnet die Stufenübersicht
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
@@ -2310,7 +2311,7 @@ if (SYNC_ON) {   // Abgleich: beim Start, bei Rückkehr in die App, wenn wieder 
   document.addEventListener('touchend', ev => {
     if (!ok) return; ok = false; const c = ev.changedTouches[0], dx = c.clientX - x0, dy = c.clientY - y0;
     if (Date.now() - t0 > 600 || Math.abs(dx) < 90 || Math.abs(dy) > Math.abs(dx) * 0.35 || String(getSelection()).length) return;
-    const a = $(dx < 0 ? '.tnav .n:not(.dis)' : '.tnav .p:not(.dis)'); if (a) { S.open.clear(); location.replace(a.getAttribute('href')); }   // Blättern ersetzt den Verlaufseintrag: Zurück führt dorthin, woher man ins Training kam
+    const a = $(dx < 0 ? '.tnav .n:not(.dis)' : '.tnav .p:not(.dis)'); if (a) { S.open.clear(); S.slide = dx < 0 ? 'n' : 'p'; location.replace(a.getAttribute('href')); }   // Blättern ersetzt den Verlaufseintrag: Zurück führt dorthin, woher man ins Training kam
   }, { passive: true });
 })();
 // UTP-Links: Verbindung schon beim Berühren des Knopfs aufbauen, damit die Erklärung schneller aufgeht.
