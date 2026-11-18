@@ -563,7 +563,17 @@ const doneBar = h => S.done && S.done.h.split('?')[0] === h ? `<div class="card 
 function done(text, h, undo) { S.done = { text, h, undo }; go(h); }
 
 // ---------- Ansicht: Trainings ----------
+const isFresh = () => !DB.teams.length && !DB.trainings.length && !Object.keys(DB.spaces || {}).length;   // erster Start: nichts angelegt, kein Mannschaftsraum
+function viewWelcome() {
+  return `<div class="welcome"><h1>Willkommen 👋</h1><p class="muted">Dein Trainingsplaner für Unihockey. Es gibt kein Konto und kein Passwort. Such dir den passenden Weg aus.</p>
+  <div class="card"><h2 class="nomargin">1 · App installieren</h2><div id="instSlot">${installHtml()}</div></div>
+  <div class="card"><h2 class="nomargin">2 · Ich bin Co-Trainer</h2><p class="small">Öffne den Link, den dir dein Haupttrainer geschickt hat (zum Beispiel per WhatsApp), auf diesem Handy. Die Mannschaft erscheint dann automatisch.</p>
+    <details><summary>Link stattdessen hier einfügen</summary><input id="joinLink" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Einladungslink einfügen"><p><button class="btn pri" data-a="joinPaste">Mannschaft öffnen</button></p></details></div>
+  <div class="card"><h2 class="nomargin">3 · Ich bin Haupttrainer</h2><p class="small">Lege deine Mannschaft an: Name, Stufe und Trainingszeiten. Danach planst du Trainings und lädst deine Co-Trainer ein.</p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></div>
+  <p class="center"><a href="#${kid('/help')}">Hilfe</a></p></div>`;
+}
 function viewHome() {
+  if (isFresh()) return viewWelcome();
   const today = iso(new Date()), f = tFilter();
   const ts = DB.trainings.filter(t => !f || (teamOf(t) || {}).id === f).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || (a.start || '').localeCompare(b.start || '') || a.title.localeCompare(b.title, 'de', { numeric: true }));
   S.visible = ts.map(t => t.id);
@@ -1536,7 +1546,18 @@ function rfMatch(t, a, b, v) {
 
 // ---------- Ansicht: Mehr ----------
 let installEvt = null;
-addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); });
+const isStandalone = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function installHtml() {   // passender Installationsweg: schon installiert, Android/Chrome mit Knopf, iPhone/Safari mit Anleitung, sonst beide Wege
+  if (isStandalone()) return '<p class="ok nomargin">✓ installiert</p>';
+  if (installEvt) return '<p class="small">Mit einem Tipp legst du die App auf deinen Startbildschirm. Danach läuft sie auch ohne Internet.</p><button class="btn pri" data-a="install">Jetzt installieren</button>';
+  if (isIOS()) return '<ol class="small helps"><li>Tippe in Safari unten auf das Teilen-Symbol (Quadrat mit Pfeil nach oben).</li><li>Wähle «Zum Home-Bildschirm».</li><li>Tippe oben rechts auf «Hinzufügen».</li></ol><p class="small muted nomargin">Das geht in Safari. Öffne die Adresse dort, falls du gerade in einem anderen Browser bist.</p>';
+  if (/android/i.test(navigator.userAgent)) return '<ol class="small helps"><li>Tippe oben rechts in Chrome auf das Menü ⋮.</li><li>Wähle «App installieren» (oder «Zum Startbildschirm hinzufügen»).</li></ol>';
+  return '<ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul>';
+}
+const instRefresh = () => { const el = $('#instSlot'); if (el) el.innerHTML = installHtml(); };
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); else instRefresh(); });
+addEventListener('appinstalled', () => { installEvt = null; if (location.hash === '#/more') render(); else instRefresh(); });
 function viewMore() {
   return head('Mehr') + `
   <a class="card choice" href="#${kid('/help')}"><b>❓ Hilfe</b><span class="small muted">Erste Schritte, Training vorbereiten, Hallenmodus, Anwesenheit, Reflexion und häufige Fragen</span></a>
@@ -2146,7 +2167,14 @@ const A = {
     modal(`<h2>Abgleich beenden?</h2><p>«${esc(tm.name)}» bleibt als Kopie auf diesem Gerät, gleicht sich aber nicht mehr mit den anderen ab. Mit dem Einladungslink kannst du später wieder beitreten.</p><div class="col"><button class="btn danger" data-a="spLeaveOk" data-k="${esc(id)}">Abgleich beenden</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   },
   spLeaveOk(el) { delete DB.spaces[el.dataset.k]; flush(); closeModal(); render(); toast('Abgleich beendet – die Kopie bleibt'); },
-  install() { installEvt && installEvt.prompt(); installEvt = null; },
+  install() { const e = installEvt; installEvt = null; if (e) e.prompt(); instRefresh(); },
+  joinPaste() {   // Einladungslink eingefügt: wie ein geöffneter #j=-Link behandeln, aber nur Links der eigenen App-Adresse
+    const v = (($('#joinLink') || {}).value || '').trim(), m = v.match(/(\S*)#j=([\w.-]+)/);
+    if (!v) return toast('Füge zuerst den Link ein');
+    const bare = u => u.replace(/[?#].*$/, '').replace(/index\.html$/, '').replace(/\/+$/, '');
+    if (!m || (m[1] && bare(m[1]) !== bare(appUrl()))) return modal(`<h2>Das ist kein Einladungslink</h2><p class="small">Ein Einladungslink dieser App beginnt mit <b>${esc(appUrl())}</b> und enthält <b>#j=</b>. Öffne am besten direkt den Link, den dir dein Haupttrainer geschickt hat, oder bitte ihn um einen neuen.</p><button class="btn" data-a="close">Schliessen</button>`);
+    spJoinOpen(m[2]);
+  },
   wipe() { if (confirm('Wirklich ALLE Trainings, eigenen Übungen und Notizen auf diesem Gerät löschen?' + (DB.spaces && Object.keys(DB.spaces).length ? ' Auch die Zugänge zu deinen Mannschaftsräumen gehen verloren.' : ''))) { DB = EMPTY(); LIB = null; flush(); render(); } },
   libKind(el) { S.lib.kind = el.dataset.k; S.lib.sp = ''; S.lib.limit = 60; render(); },
   libMore() { S.lib.limit += 100; $('#liblist').innerHTML = libList(); },
