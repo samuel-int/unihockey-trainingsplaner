@@ -199,3 +199,4 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 :root { --donebg: #e4f5e8; --doneline: #9fd3ad; }
 @media (prefers-color-scheme: dark) { :root { --donebg: #1d3326; --doneline: #2f5a3d; } }
 .tcard.done { background: var(--donebg); box-shadow: inset 0 0 0 1px var(--doneline); opacity: 1; }
+.help ol { margin: 6px 0 2px; padding-left: 22px; } .help li { margin: 7px 0; } .help > summary { padding: 6px 0; }

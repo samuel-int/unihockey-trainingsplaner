@@ -539,6 +539,7 @@ function trailOf() {
     return [['RTP']];
   }
   if (p[0] === 'more') return [['Mehr']];
+  if (p[0] === 'help') return [['Mehr', '/more'], ['Hilfe']];
   return [TR, ['Liste']];
 }
 function crumbBar(run) {   // run: Hallenmodus, nur zur Orientierung (ohne Links, damit nichts versehentlich abbricht)
@@ -1538,6 +1539,7 @@ let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (location.hash === '#/more') render(); });
 function viewMore() {
   return head('Mehr') + `
+  <a class="card choice" href="#${kid('/help')}"><b>❓ Hilfe</b><span class="small muted">Erste Schritte, Training vorbereiten, Hallenmodus, Anwesenheit, Reflexion und häufige Fragen</span></a>
   ${isHelperDevice() ? '' : `<div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">${SYNC_ON ? 'Deine Co-Trainer lädst du auf der Mannschaftsseite über «Mannschaft teilen» ein: Sie gleichen sich automatisch ab. ' : ''}Einzelne Trainings gibst du im Training über «Teilen» als Kopie weiter (Link, QR-Code oder Datei) – für Trainer anderer Mannschaften. Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.${SYNC_ON ? ' Die Sicherungsdatei enthält dann auch die Zugangsschlüssel zu deinen Mannschaftsräumen – bewahre sie sicher auf und gib sie nicht weiter.' : ''}</p>
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>`}
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
@@ -1545,6 +1547,15 @@ function viewMore() {
   <div class="card"><h2 class="nomargin">Teilen und Datenschutz</h2><p class="small">Deine Daten liegen auf diesem Gerät, es gibt kein Konto.${SYNC_ON ? ' <b>Automatisch abgeglichen</b> wird nur über den Mannschaftsraum (siehe unten).' : ' Es gibt keinen Server.'} Wenn du ein einzelnes Training teilst, geht eine <b>Kopie</b> weg, die sich danach nicht mehr abgleicht: Wer etwas ändert, muss neu teilen. Spielerlisten, J+S-Nummern, Anwesenheiten und Notizen zu Spielern (aus der Reflexion, auch Tore und Assists) gehören zu Kindern und bleiben auf dem Gerät. Sie gehen nie in einen Teilen-Link${SYNC_ON ? '' : ' (nur die Spielerliste, wenn du beim Teilen einer Mannschaft ausdrücklich «Spielerliste mitgeben» wählst)'}. Sie sind im Mannschaftsraum (verschlüsselt) und in «Alles exportieren» enthalten, deiner eigenen Sicherung. Gib solche Dateien und Links nicht in Gruppenchats.</p>${SYNC_ON ? '<p class="small"><b>Mannschaftsraum:</b> «Mannschaft teilen» auf der Mannschaftsseite richtet einen Mannschaftsraum ein und lädt Co-Trainer ein (mit Änderungsrecht oder nur zum Lesen). Die Daten – auch Spielerliste, Anwesenheit und Reflexionen – liegen dann verschlüsselt auf einem Server, der nur Chiffretext sieht, und gleichen sich bei allen automatisch ab. Der Schlüssel steht nur im Einladungslink, nie auf dem Server: Wer den Link hat, hat Zugang zur Mannschaft. Mit «Zugang erneuern» sperrst du alle alten Links aus.</p>' : ''}</div>
   <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist auf diesem Gerät gespeichert${SYNC_ON ? " (Mannschaften mit Mannschaftsraum zusätzlich verschlüsselt auf dem Server)" : ""}.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
   <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
+}
+
+// ---------- Ansicht: Hilfe ----------
+// Texte stehen als statischer Inhalt in help.js (window.HELP). Abschnitte für Haupttrainer stehen auf Geräten, die nur Co-Trainer-/Nur-Lesen-Mannschaften haben, am Ende.
+function viewHelp() {
+  const H = window.HELP || [], helper = isHelperDevice(), host = H.filter(x => x.host), rest = H.filter(x => !x.host);
+  const sec = (x, i, late) => `<details class="card help"${i === 0 ? ' open' : ''}><summary>${esc(x.t)}${late ? ' <span class="small muted">(für Haupttrainer)</span>' : ''}</summary><ol class="small helps">${x.s.map(t => `<li>${t}</li>`).join('')}</ol></details>`;
+  const list = helper ? [...rest.map((x, i) => sec(x, i)), ...host.map(x => sec(x, 1, true))] : H.map((x, i) => sec(x, i));
+  return head('Hilfe', null, '', 'Kurz erklärt, für Trainer unterwegs') + (list.length ? list.join('') : '<p class="muted center">Keine Hilfe gefunden.</p>');
 }
 
 // ---------- Teilen / Import ----------
@@ -1946,6 +1957,7 @@ function render() {
   } else if (p[0] === 'season') html = viewSeason();
   else if (p[0] === 'plan') { html = viewPlan(); tab = '/'; }
   else if (p[0] === 'more') html = viewMore();
+  else if (p[0] === 'help') { html = viewHelp(); tab = '/more'; }
   else html = viewHome();
   const c0 = r.chain.length ? r.chain[0][0] : '';   // Reiter = Bereich, aus dem man kam (erster Eintrag der Herkunft)
   if (c0) tab = c0 === 'k' ? '/teams' : c0 === 'b' ? '/rtp' : c0 === 'x' ? '/lib' : '/';
