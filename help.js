@@ -6,7 +6,7 @@ window.HELP = [
     '<b>Du bist Co-Trainer?</b> Öffne auf diesem Handy den Einladungslink, den dir dein Haupttrainer geschickt hat (zum Beispiel per WhatsApp). Tippe auf «Beitreten»: Die Mannschaft mit allen Trainings erscheint, du musst nichts abtippen.',
     '<b>Du bist Haupttrainer?</b> Tippe unten auf «Teams» und dann auf «+ Neu», um deine Mannschaft anzulegen. Wie du Co-Trainer einlädst, steht weiter unten.',
     '<b>«Co-Trainer»</b> heisst: du darfst alles ansehen und ändern (Trainings, Anwesenheit, Reflexion). Alles gleicht sich automatisch mit den anderen ab.',
-    '<b>«Nur lesen»</b> heisst: du siehst alles, kannst aber nichts ändern. Das ist zum Beispiel für Eltern oder Gäste gedacht.',
+    '<b>«Nur lesen»</b> heisst: du siehst alles, kannst aber nichts ändern. Das ist für Helfer im Trainerstaff gedacht, die nur mitschauen. Nicht für Eltern: Der Link zeigt auch Anwesenheiten und Notizen zu Spielern.',
     'Es gibt kein Konto und kein Passwort. Der Einladungslink ist dein Schlüssel zur Mannschaft: Schick ihn nicht weiter und stell ihn nicht in grosse Gruppenchats.'
   ] },
   { id: 'prep', t: 'Ein Training vorbereiten', s: [
