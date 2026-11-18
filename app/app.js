@@ -27,7 +27,9 @@ const SYNCCFG = (() => {
 const SYNC_ON = !!(SYNCCFG.url && SYNCCFG.key && window.crypto && crypto.subtle);
 const SP = { chain: Promise.resolve(), pend: new Map(), st: {}, t: null };   // Abgleich: Reihenfolge der Vorgänge, wartende, Status je Mannschaft, Timer
 let saveT;
-const flush = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
+let wiped = false;   // nach «Alle Daten löschen»: ein leerer Stand wird nicht mehr zurückgeschrieben (auch nicht beim Verlassen der Seite)
+const dbEmpty = () => !DB.trainings.length && !DB.teams.length && !DB.custom.length && !Object.keys(DB.notes || {}).length && !Object.keys(DB.spaces || {}).length && !Object.keys(DB.seasons || {}).length;
+const flush = () => { if (wiped && dbEmpty()) return; wiped = false; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); spDirty(); };
 addEventListener('pagehide', flush);
 
@@ -2175,7 +2177,19 @@ const A = {
     if (!m || (m[1] && bare(m[1]) !== bare(appUrl()))) return modal(`<h2>Das ist kein Einladungslink</h2><p class="small">Ein Einladungslink dieser App beginnt mit <b>${esc(appUrl())}</b> und enthält <b>#j=</b>. Öffne am besten direkt den Link, den dir dein Haupttrainer geschickt hat, oder bitte ihn um einen neuen.</p><button class="btn" data-a="close">Schliessen</button>`);
     spJoinOpen(m[2]);
   },
-  wipe() { if (confirm('Wirklich ALLE Trainings, eigenen Übungen und Notizen auf diesem Gerät löschen?' + (DB.spaces && Object.keys(DB.spaces).length ? ' Auch die Zugänge zu deinen Mannschaftsräumen gehen verloren.' : ''))) { DB = EMPTY(); LIB = null; flush(); render(); } },
+  wipe() {   // Bestätigung mit klarer Auflistung; gelöscht wird erst in wipeOk
+    const sp = Object.keys(DB.spaces || {}).length, nT = DB.trainings.length, nM = DB.teams.length;
+    modal(`<h2>Alle Daten auf diesem Gerät löschen?</h2><p class="small nomargin">Das wird gelöscht:</p>
+      <ul class="small"><li>${nT} Training${nT === 1 ? '' : 's'} samt Anwesenheit und Reflexionen</li><li>${nM} Mannschaft${nM === 1 ? '' : 'en'} mit Spielerlisten und Saisonplanung</li><li>${DB.custom.length} eigene Übung${DB.custom.length === 1 ? '' : 'en'} und ${Object.keys(DB.notes).length} Notiz${Object.keys(DB.notes).length === 1 ? '' : 'en'}</li>${sp ? `<li>${sp} Zugang${sp === 1 ? '' : 'e'} zu Mannschaftsräumen</li>` : ''}<li>der Stand des Hallenmodus</li></ul>
+      <p class="small"><b>Das lässt sich nicht rückgängig machen.</b>${isHelperDevice() ? '' : ' Sichere vorher mit «Alles exportieren».'}</p>
+      ${sp ? '<p class="small"><b>Mannschaftsräume auf dem Server werden dadurch nicht gelöscht.</b> Die anderen Trainer behalten ihre Daten, und mit dem Einladungslink kannst du wieder beitreten. Willst du einen eigenen Raum ganz entfernen, löse ihn vorher auf der Mannschaftsseite mit «Raum auflösen» auf.</p>' : ''}
+      <div class="col"><button class="btn danger" data-a="wipeOk">Alles löschen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  wipeOk() {   // alles auf dem Gerät entfernen und neu laden (setzt auch den Zustand im Speicher zurück); Mannschaftsräume auf dem Server bleiben
+    clearTimeout(saveT); clearTimeout(SP.t); wiped = true; DB = EMPTY(); LIB = null; S.run = null;
+    for (const st of ['localStorage', 'sessionStorage']) { try { const w = window[st]; for (let k = w.length - 1; k >= 0; k--) { const n = w.key(k); if (n && n.startsWith('unihockey') && n !== 'unihockey-sync-dev') w.removeItem(n); } } catch (e) { /* Speicher nicht erreichbar */ } }   // Schalter 'unihockey-sync-dev' (nur localhost, Entwickler) bleibt
+    closeModal(); location.replace(location.pathname + location.search);
+  },
   libKind(el) { S.lib.kind = el.dataset.k; S.lib.sp = ''; S.lib.limit = 60; render(); },
   libMore() { S.lib.limit += 100; $('#liblist').innerHTML = libList(); },
   utp(el) { navigator.clipboard && navigator.clipboard.writeText(el.dataset.n).then(() => toast('Name kopiert'), () => { }); open('https://utp.swissunihockey.ch', '_blank', 'noopener'); },
