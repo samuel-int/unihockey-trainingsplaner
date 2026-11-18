@@ -185,3 +185,12 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .rfhint { margin: 6px 0 0; color: var(--gfg); } .rbrow { display: block; padding: 8px 0; border-top: 1px solid var(--line); color: var(--text); }
 @media print { .noprint, .rfbar, .rftag { display: none !important; } }
 .runnav .runend { flex: 1.7; }
+
+/* Wechsel-Animation beim Blättern zwischen Trainings: Inhalt gleitet aus der Blätterrichtung herein, Titel blendet ein */
+#app.sl-n > :not(header), #app.sl-p > :not(header) { animation: slIn .3s ease-out; }
+#app.sl-n { --slx: 56px; } #app.sl-p { --slx: -56px; }
+#app.sl-n header h1, #app.sl-n header .sub, #app.sl-p header h1, #app.sl-p header .sub, #app.sl-n .crumbs .cur, #app.sl-p .crumbs .cur { animation: slFade .35s ease-out; }
+@keyframes slIn { from { transform: translateX(var(--slx)); opacity: .15; } to { transform: none; opacity: 1; } }
+@keyframes slFade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { #app.sl-n > *, #app.sl-p > *, #app.sl-n header *, #app.sl-p header * { animation: none !important; } }
+#app.sl-n, #app.sl-p { overflow-x: clip; }
