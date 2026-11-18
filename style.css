@@ -194,3 +194,8 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 @keyframes slFade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { #app.sl-n > *, #app.sl-p > *, #app.sl-n header *, #app.sl-p header * { animation: none !important; } }
 #app.sl-n, #app.sl-p { overflow-x: clip; }
+
+/* Abgeschlossenes Training (Reflexion gespeichert): pastellgrüner Hintergrund in Listen, Mannschaftsseite und Kalender */
+:root { --donebg: #e4f5e8; --doneline: #9fd3ad; }
+@media (prefers-color-scheme: dark) { :root { --donebg: #1d3326; --doneline: #2f5a3d; } }
+.tcard.done { background: var(--donebg); box-shadow: inset 0 0 0 1px var(--doneline); opacity: 1; }
