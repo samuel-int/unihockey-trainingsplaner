@@ -573,10 +573,10 @@ function done(text, h, undo) { S.done = { text, h, undo }; go(h); }
 // ---------- Ansicht: Trainings ----------
 const isFresh = () => !DB.teams.length && !DB.trainings.length && !Object.keys(DB.spaces || {}).length && !DB.club;   // erster Start: nichts angelegt, kein Mannschaftsraum
 function viewWelcome() {
-  return `<div class="welcome"><h1>Willkommen 👋</h1><p class="muted">Dein Trainingsplaner für Unihockey. Es gibt kein Konto und kein Passwort. Such dir den passenden Weg aus.</p>
+  return `<div class="welcome"><h1>Willkommen 👋</h1><p class="muted">Dein Trainingsplaner für Unihockey. Such dir den passenden Weg aus.</p>
   ${SYNC_ON ? `<div class="card"><h2 class="nomargin">Dein Name</h2><label>Wie heisst du?<input data-b="me:name" value="${esc(meGet().name)}" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off"></label><p class="small muted nomargin">Der Name erscheint bei den anderen Personen deiner Mannschaft. Du kannst ihn jederzeit oben rechts ändern.</p></div>` : ''}
   <div class="card"><h2 class="nomargin">1 · App installieren</h2><div id="instSlot">${installHtml()}</div></div>
-  <div class="card"><h2 class="nomargin">2 · Ich bin Assistenz</h2><p class="small">Öffne den Link, den dir dein Trainer geschickt hat (zum Beispiel per WhatsApp), auf diesem Handy. Die Mannschaft erscheint dann automatisch.</p>
+  <div class="card"><h2 class="nomargin">2 · Ich bin Assistenz</h2><p class="small">Öffne den Link, den dir dein Trainer geschickt hat, auf diesem Handy. Die Mannschaft erscheint dann automatisch.</p>
     <details><summary>Link stattdessen hier einfügen</summary><input id="joinLink" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Einladungslink einfügen"><p><button class="btn pri" data-a="joinPaste">Mannschaft öffnen</button></p></details></div>
   <div class="card"><h2 class="nomargin">3 · Ich bin Trainer</h2><p class="small">Lege deine Mannschaft an: Name, Stufe und Trainingszeiten. Danach planst du Trainings und lädst deine Assistenz ein.</p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></div>
   ${SYNC_ON ? `<div class="card"><h2 class="nomargin">4 · Ich bin Funktionär</h2><p class="small">Öffne den Link, den dir der Admin des Vereins geschickt hat. Du siehst dann alle Mannschaften, kannst aber nichts ändern.</p>
@@ -629,10 +629,10 @@ function itemCard(t, it, i) {
   // Namen sind gesperrt, ausser bei eigenen Übungen (dort gilt die Änderung für die Übung in allen Trainings)
   const nameEl = cx ? `<input class="name" data-b="x:${it.id}:name" value="${esc(it.name)}" placeholder="${esc(ty[0])}">` : `<div class="name ro" data-a="tog" data-id="${it.id}" role="button">${esc(it.name || ty[0])}</div>`;
   const lockNote = cx ? '' : free ? `<div class="cxbox"><div class="small muted">🔒 Der Name ist gesperrt, weil dieser Block keine Bibliotheksübung ist. Speichere ihn als eigene Übung: dann kannst du den Namen ändern und die Übung in anderen Trainings verwenden.</div><button class="btn sm" data-a="freeToC" data-id="${it.id}">Als eigene Übung speichern</button></div>` : '<div class="small muted">🔒 Der Name ist gesperrt. Umbenennen kannst du nur eigene Übungen.</div>';
-  return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}">
-    <div class="row"><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
+  return `<div class="card item ${open ? 'open' : ''}" style="--c:${ty[1]}" data-iid="${esc(it.id)}">
+    <div class="row"><button class="grip" type="button" data-a="grip" aria-label="Übung verschieben: am Griff ziehen" title="Ziehen, um die Reihenfolge zu ändern">⠿</button><button class="tog" data-a="tog" data-id="${it.id}" aria-label="Details">${open ? '▾' : '▸'}</button>
       ${nameEl}
-      <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>
+      <input class="min" type="number" inputmode="numeric" min="0" data-b="i:${it.id}:min" value="${esc(it.min)}" aria-label="Minuten"><span class="muted">′</span></div>${regelBox(t, it)}
     ${open ? `<div class="body">
       ${athHtml(it.ath)}${ux ? `<div class="expl open"><div class="exb">${exBody(ux)}</div>${exLinks(u, ux)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : explain(u, null, 'e:' + it.id)}
       ${reflHint(reflKey(it))}
@@ -702,6 +702,12 @@ function rtpBlockOf(t) {
   const st = stageById(r.stage), b = st && (st.blocks || []).find(x => x.nr === +r.block);
   return b && b.main ? b : null;
 }
+// Regelfokus aus dem RTP-Block (wie in der RTP-Zusammenfassung): nur bei der letzten Übung des Trainings (im RTP das Spiel); ohne RTP-Bezug oder ohne Regelfokus nichts.
+function regelBox(t, it) {
+  if (!t || !it || !t.items.length || t.items[t.items.length - 1] !== it) return '';
+  const b = rtpBlockOf(t), regel = b ? [].concat(b.regel || []).filter(Boolean) : [];
+  return regel.length ? `<div class="regelbox"><b>Regelfokus:</b> ${regel.map(esc).join(', ')}</div>` : '';
+}
 function rtpSummary(t, mode) {
   const b = rtpBlockOf(t); if (!b) return '';
   const m = b.main, sec = b.sec, regel = [].concat(b.regel || []).filter(Boolean);
@@ -729,7 +735,7 @@ function viewRead(t) {
     ${t.sec ? `<p class="small">Nebenschwerpunkt: ${esc(t.sec)}</p>` : ''}${t.notes ? `<p class="small">${nl2br(t.notes)}</p>` : ''}</div>
   ${rtpSummary(t)}${matCard(t)}
   ${t.items.map(it => { const ty = TYPES[it.type] || TYPES.sonst, from = m; m += +it.min || 0; return `<div class="card item" style="--c:${ty[1]}"><div class="row"><b>${esc(it.name || ty[0])}</b><span class="muted nowrap">${from}′–${m}′</span></div>
-    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${athHtml(it.ath)}${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}${reflCompact(t)}${reflLink(t)}`;
+    <div class="small muted">${esc(ty[0])} · ${esc(it.min)} Min.</div>${regelBox(t, it)}${athHtml(it.ath)}${explain(itemUtp(it, t), itemEx(it, t), 'v:' + it.id)}${it.desc ? `<p>${nl2br(it.desc)}</p>` : ''}${it.coach ? `<p class="small"><b>Coaching:</b> ${nl2br(it.coach)}</p>` : ''}${goalieHtml(it.g, true)}</div>`; }).join('')}${reflCompact(t)}${reflLink(t)}`;
 }
 
 // ---------- Ansicht: Hallenmodus ----------
@@ -748,7 +754,7 @@ function viewRun(t) {
   return `<div class="run" style="--c:${ty[1]}">${crumbBar(true)}<div class="row runtop"><a class="btn sm" href="#${kid('/t/' + t.id)}" data-a="runExit">✕ Beenden</a><span class="grow center">${r.i + 1} / ${t.items.length}</span><span class="muted">${esc(ty[0])}</span></div>
     <div class="dots">${t.items.map((x, i) => `<i data-a="runGo" data-i="${i}" class="${i === r.i ? 'cur' : i < r.i ? 'done' : ''}" style="flex:${+x.min || 1}"></i>`).join('')}</div>
     ${r.i === 0 && !r.started ? reflPrevCard(t) + rtpSummary(t) + matCard(t) + attLink(t) : ''}
-    <h1 class="runname">${esc(it.name || ty[0])}</h1>
+    <h1 class="runname">${esc(it.name || ty[0])}</h1>${regelBox(t, it)}
     <div class="clock ${r.left < 0 ? 'over' : ''}" id="clock">${mmss(r.left)}</div>
     <div class="row center"><button class="btn pri big" data-a="runTog">${r.on ? '❚❚ Pause' : '▶ Start'}</button><button class="btn" data-a="runReset">↺</button></div>
     ${it.ath ? `<div class="card">${athHtml(it.ath)}</div>` : ''}${itemUtp(it, t) ? `<div class="card">${explain(itemUtp(it, t), itemEx(it, t), 'run:' + it.id)}</div>` : ''}${it.desc ? `<div class="card"><p>${nl2br(it.desc)}</p></div>` : ''}${it.coach ? `<div class="card"><b>Coaching</b><p>${nl2br(it.coach)}</p></div>` : ''}
@@ -784,7 +790,7 @@ function libList() {
 function viewLib() {
   const f = S.lib, pt = S.pick && getT(S.pick);
   const sps = [...new Set(lib().filter(e => (!f.stage || e.stages.has(f.stage)) && (!f.kind || e.kind === f.kind)).flatMap(e => [...e.sps]))].sort((a, b) => a.localeCompare(b, 'de'));
-  return head(pt ? 'Übung hinzufügen' : 'Bibliothek', pt ? `/t/${pt.id}` : null, pt ? '' : `<a class="btn" href="#${kid('/lib/new')}">+ Eigene</a>`, pt ? `zu: <b>${esc(pt.title)}</b>` : 'Übungen suchen und ansehen', ctxBar()) + `
+  return head(pt ? 'Übung hinzufügen' : 'Bibliothek', pt ? `/t/${pt.id}` : null, pt ? '' : `<a class="btn" href="#${kid('/lib/new')}">+ Eigene</a>`, pt ? `zu: <b>${esc(pt.title)}</b>` : '', ctxBar()) + `
   <input type="search" id="q" data-b="l:q" value="${esc(f.q)}" placeholder="Übung suchen …">
   <div class="chips">${KINDS.map(([k, l]) => `<button class="chip ${f.kind === k ? 'sel' : ''}" data-a="libKind" data-k="${k}">${l}</button>`).join('')}</div>
   <div class="grid2"><select data-b="l:stage" data-r="1">${stageOpts(f.stage, true)}</select><select data-b="l:sp" data-r="1">${opt('', 'Alle Schwerpunkte', f.sp)}${sps.map(s => opt(s, s, f.sp)).join('')}</select></div>
@@ -797,10 +803,10 @@ function usesHtml(e) {
 function viewLibItem(e) {
   const ty = TYPES[e.kind] || TYPES.sonst, pt = S.pick && getT(S.pick), nt = note(e.key), lu = e.src === 'rtp' ? utpUrl(e.name, libStage(e)) : '', lx = e.src === 'rtp' ? utpEx(e.name, libStage(e)) : null;
   let body = '';
-  if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div><p class="small muted">${esc(G.note)}</p>`;
+  if (e.src === 'goalie') body = `<div class="card"><p>${esc(e.desc)}</p><b>Coaching-Punkte</b><ul>${e.coach.map(c => `<li>${esc(c)}</li>`).join('')}</ul>${e.vari ? `<p><b>Variationen:</b> ${esc(e.vari)}</p>` : ''}<p class="small muted">Material: ${esc(e.mat)} · ca. ${e.min} Min. · ${esc(G.cats[e.cat])}</p></div>`;
   else if (e.src === 'custom') body = `<div class="card">${e.desc ? `<p>${nl2br(e.desc)}</p>` : '<p class="muted">Keine Beschreibung.</p>'}${[['mat', 'Material'], ['coach', 'Keypoints'], ['fragen', 'Coachingfragen'], ['leichter', 'Erleichtern'], ['schwerer', 'Erschweren'], ['vari', 'Variieren']].map(([k, l]) => e[k] ? `<p><b>${l}:</b><br>${nl2br(e[k])}</p>` : '').join('')}${e.goalie ? `<div class="gbox"><b>🧤 Goalie</b><p>${nl2br(e.goalie)}</p></div>` : ''}</div>
     <div class="row"><a class="btn" href="#${kid('/lib/edit/' + e.id)}">Bearbeiten</a><button class="btn danger" data-a="delC" data-id="${e.id}">Löschen</button></div>`;
-  else body = `${lu ? (lx ? `<div class="card"><b>Erklärung</b><div class="exb">${exBody(lx)}</div>${exLinks(lu, lx)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey. Öffnet in einem neuen Tab; braucht Internet.</p></div>`) : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<div class="small muted" style="margin-top:10px">${esc(p.st)}${p.faktor ? ' · ' + esc(p.faktor) : ''}</div>${athHtml(athData(p))}`).join('')}</div>` : ''}${norm(e.name) === 'swiss way warm up' && SWD ? `<div class="card"><b>Auswahl pro Training</b><p class="small">Beim Hinzufügen steht in der Beschreibung, welche Übungen des Swiss Way Warm-ups an diesem Tag dran sind (Teil 1 Sensorik, Teil 2 Bewegungsvorbereitung, Teil 3 Bewegungskontrolle passend zum Athletik-Schwerpunkt). Jedes Training bekommt eine andere Auswahl; im Training gibt es «Andere Auswahl».</p></div>` : ''}
+  else body = `${lu ? (lx ? `<div class="card"><b>Erklärung</b><div class="exb">${exBody(lx)}</div>${exLinks(lu, lx)}<p class="small muted nomargin">Quelle: swiss unihockey, Unihockey-Trainingsplaner</p></div>` : `<div class="card">${utpBtn(lu, 'block')}<p class="small muted nomargin">Offizielle Beschreibung, Skizze und Video bei swiss unihockey. Öffnet in einem neuen Tab.</p></div>`) : ''}${e.params ? `<div class="card"><b>Vorgaben aus dem RTP</b>${e.params.map(p => `<div class="small muted" style="margin-top:10px">${esc(p.st)}${p.faktor ? ' · ' + esc(p.faktor) : ''}</div>${athHtml(athData(p))}`).join('')}</div>` : ''}${norm(e.name) === 'swiss way warm up' && SWD ? `<div class="card"><b>Auswahl pro Training</b><p class="small">Beim Hinzufügen steht in der Beschreibung, welche Übungen des Swiss Way Warm-ups an diesem Tag dran sind (Teil 1 Sensorik, Teil 2 Bewegungsvorbereitung, Teil 3 Bewegungskontrolle passend zum Athletik-Schwerpunkt). Jedes Training bekommt eine andere Auswahl; im Training gibt es «Andere Auswahl».</p></div>` : ''}
     <div class="card"><label>🎒 Material (wird beim Hinzufügen ins Training übernommen)<input data-b="n:${esc(e.key)}:mat" value="${esc(nt.mat)}" placeholder="z.B. Hütchen, Bälle, Leibchen"></label>
     <label>Eigene Beschreibung / Notizen<textarea data-b="n:${esc(e.key)}:desc" rows="4" placeholder="Ablauf, Skizze in Worten, Erfahrungen …">${esc(nt.desc)}</textarea></label>
     ${e.kind !== 'athletik' ? `<label>🧤 Goalie-Hinweis zu dieser Übung<textarea data-b="n:${esc(e.key)}:goalie" rows="2" placeholder="${esc(goalieFocus(e.kind, [...e.sps][0], [...e.efs][0]))}">${esc(nt.goalie)}</textarea></label>` : ''}
@@ -854,7 +860,7 @@ function viewNewEx(t) {   // «Neue eigene Übung» im Training (oder ein freier
 // ---------- Ansicht: RTP ----------
 function viewRtp() {
   const st = stageById(DB.stage) || R.stages[0], gc = G.curriculum[st.id];
-  const gbox = `<div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul><p class="small muted">${esc(G.note)}</p></div>`;
+  const gbox = `<div class="gbox card"><b>🧤 Goalie-Ausbildung ${esc(st.id)}: ${esc(gc.title)}</b><ul class="small">${gc.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`;
   return head('Rahmentrainingsplan', null, '', S.flow ? 'Neues Training · Stufe und Block wählen' : 'Stufe wählen, dann Block ansehen', ctxBar('block')) + `<div class="chips">${R.stages.map(s => `<button class="chip ${s.id === st.id ? 'sel' : ''}" data-a="stage" data-k="${s.id}">${s.id}</button>`).join('')}</div>
   <div class="card"><h2 class="nomargin">${esc(st.name)}${st.draft ? ' <span class="chip">Arbeitsstand</span>' : ''}</h2><p class="muted small">${esc(st.annahme)}</p>
     <details><summary>Hinweise zum RTP</summary><ul class="small">${R.hints.map(h => `<li>${esc(h)}</li>`).join('')}</ul>
@@ -1144,7 +1150,7 @@ const teamInfo = tm => [(stageById(tm.stage) || {}).name].filter(Boolean);
 const sessLines = tm => teamSessions(tm).map(x => `<div class="small">${esc(sessSummary(tm, x))}</div>`).join('') || '<div class="small muted">Noch keine Trainingszeit</div>';
 function viewTeams() {
   const today = iso(new Date());
-  return head('Mannschaften', null, `<a class="btn pri" href="#/team/new">+ Neu</a>`, 'Jede Mannschaft hat ihren eigenen Trainingsplan') + doneBar('/teams') + (DB.teams.length ? DB.teams.map(tm => {
+  return head('Mannschaften', null, `<a class="btn pri" href="#/team/new">+ Neu</a>`) + doneBar('/teams') + (DB.teams.length ? DB.teams.map(tm => {
     const ts = teamTrainings(tm), next = ts.filter(t => t.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
     return `<a class="card item" style="--c:${esc(tm.color)}" href="#/team/${tm.id}"><div class="row"><b>${esc(tm.name)}${SYNC_ON && spOf(tm.id) ? ' <span title="Mit Co-Trainern abgeglichen">🔄</span>' : ''}</b><span class="muted small">${ts.length} Training${ts.length === 1 ? '' : 's'}</span></div><div class="small muted">${esc(teamInfo(tm).join(' · '))}</div><div class="muted">${sessLines(tm)}</div><div class="small">${next ? 'Nächstes: ' + esc(fmtDate(next.date)) : 'Kein kommendes Training'}</div></a>`;
   }).join('') : `<div class="card empty"><h2>Noch keine Mannschaft</h2><p>Lege deine Mannschaft an (Name, Stufe, Farbe, Ort, Trainingstage). Dann planst du ihre Trainings und die Saison direkt dort und siehst sie im Kalender in ihrer Farbe.</p><p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></p></div>`);
@@ -1583,8 +1589,8 @@ function viewMore() {
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>`}
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
     <ul class="small"><li><b>Android (Chrome):</b> Menü ⋮ → «App installieren» bzw. «Zum Startbildschirm hinzufügen»</li><li><b>iPhone (Safari):</b> Teilen-Symbol → «Zum Home-Bildschirm»</li></ul><p class="small muted">Nach dem ersten Öffnen funktioniert die App auch ohne Internet (z.B. in der Halle).</p></div>
-  <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen. Alles ist auf diesem Gerät gespeichert${SYNC_ON ? " (Mannschaften mit Mannschaftsraum zusätzlich verschlüsselt auf dem Server)" : ""}.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
-  <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey, Verwendung mit Einverständnis, nicht-kommerziell. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p><p class="small">${esc(G.note)}</p></div>`;
+  <div class="card"><h2 class="nomargin">Daten</h2><p class="small">${DB.trainings.length} Trainings · ${DB.custom.length} eigene Übungen · ${Object.keys(DB.notes).length} Notizen.</p><button class="btn danger" data-a="wipe">Alle Daten löschen</button></div>
+  <div class="card"><h2 class="nomargin">Über</h2><p class="small">Struktur, Schwerpunkte, Ausbildungsziele, Trainingsformen und Athletik stammen aus den Rahmentrainingsplänen (RTP) von swiss unihockey (Stand ${esc(R.generated)}; U16/U18 «in Arbeit»). Beschreibungen, Skizzen und Videos der Trainingsformen gibt es im <a href="https://utp.swissunihockey.ch" target="_blank" rel="noopener">Unihockey-Trainingsplaner (UTP)</a>.</p><p class="small">Die Texte zu den Trainingsformen (Beschreibung, Keypoints, Coachingfragen, Rad der Variation) stammen aus dem Unihockey-Trainingsplaner (UTP): © swiss unihockey. Skizzen und Videos gibt es im UTP (Link bei jeder Übung).</p></div>`;
 }
 
 // ---------- Ansicht: Hilfe ----------
@@ -1865,10 +1871,10 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return tm && (spRo(sp) || curRole() === 'F') ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
+const RO_A = new Set(['newT', 'mv', 'grip', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
-  const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
+  const app = $('#app'); app.querySelectorAll('.grip').forEach(e => e.remove()); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
   const h = $('#app header.top'), f = curRole() === 'F' || (spOf(tm.id) || {}).role === 'F', html = f ? '<div class="card rotop">🔒 Funktionär – nur ansehen</div>' : '<div class="card rotop">🔒 Nur lesen – Änderungen macht der Haupttrainer</div>';
   if (h) h.insertAdjacentHTML('afterend', html); else app.insertAdjacentHTML('afterbegin', html);
 }
@@ -1992,7 +1998,7 @@ function meGet() {
 const meName = () => String((DB.me && DB.me.name) || '').replace(/\s+/g, ' ').trim();
 function askName(cb, why) {   // «Wie heisst du?»; danach läuft cb
   S.nameCb = cb;
-  modal(`<h2>Wie heisst du?</h2><p class="small">${why || 'Dein Name erscheint bei den anderen Personen deiner Mannschaft, damit man sieht, wer dabei ist. Er liegt verschlüsselt auf dem Server; nur die Mannschaft kann ihn lesen. Es gibt kein Konto und kein Passwort.'}</p><label>Dein Name<input id="nameIn" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off" value="${esc(meGet().name)}"></label><div class="row"><button class="btn pri" data-a="nameOk">Weiter</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  modal(`<h2>Wie heisst du?</h2><p class="small">${why || 'Dein Name erscheint bei den anderen Personen deiner Mannschaft, damit man sieht, wer dabei ist. Er liegt verschlüsselt auf dem Server; nur die Mannschaft kann ihn lesen.'}</p><label>Dein Name<input id="nameIn" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off" value="${esc(meGet().name)}"></label><div class="row"><button class="btn pri" data-a="nameOk">Weiter</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   setTimeout(() => { const e = $('#nameIn'); if (e) e.focus(); }, 50);
 }
 
@@ -2831,6 +2837,46 @@ if (SYNC_ON) {   // Abgleich: beim Start, bei Rückkehr in die App, wenn wieder 
     if (Date.now() - t0 > 600 || Math.abs(dx) < 90 || Math.abs(dy) > Math.abs(dx) * 0.35 || String(getSelection()).length) return;
     const a = $(dx < 0 ? '.tnav .n:not(.dis)' : '.tnav .p:not(.dis)'); if (a) { S.open.clear(); S.slide = dx < 0 ? 'n' : 'p'; location.replace(a.getAttribute('href')); }   // Blättern ersetzt den Verlaufseintrag: Zurück führt dorthin, woher man ins Training kam
   }, { passive: true });
+})();
+// Übungen per Ziehen am Griff ⠿ umordnen (Pointer Events: Finger und Maus). Gezogen wird nur am Griff, damit Scrollen und Wischen normal bleiben.
+// Speichern wie bei A.mv: Reihenfolge in t.items ändern, touch(t) (neuer Zeitstempel für den Mannschaftsraum-Abgleich), neu zeichnen.
+(function () {
+  let d = null;
+  const others = () => [...document.querySelectorAll('#app .card.item[data-iid]')].filter(c => c !== d.card);
+  function update() {
+    if (!d) return;
+    d.card.style.transform = 'translateY(' + (d.y - d.y0 + (scrollY - d.s0)) + 'px)';
+    const o = others(); let to = 0;
+    o.forEach(c => { const r = c.getBoundingClientRect(); if (r.top + r.height / 2 < d.y) to++; c.classList.remove('dropb', 'dropa'); });
+    d.to = to; if (o.length) (to < o.length ? o[to] : o[o.length - 1]).classList.add(to < o.length ? 'dropb' : 'dropa');
+  }
+  function loop() {
+    if (!d) return;
+    const m = 90, sp = d.y < m ? -Math.ceil((m - d.y) / 5) : d.y > innerHeight - m ? Math.ceil((d.y - (innerHeight - m)) / 5) : 0;
+    if (sp) { scrollBy(0, sp); update(); }
+    d.raf = requestAnimationFrame(loop);
+  }
+  function stop() {
+    if (!d) return; cancelAnimationFrame(d.raf);
+    document.querySelectorAll('#app .card.item').forEach(c => c.classList.remove('dropb', 'dropa'));
+    d.card.classList.remove('dragging'); d.card.style.transform = ''; document.body.classList.remove('dragmode');
+    try { d.g.releasePointerCapture(d.pid); } catch (e) { /* schon frei */ }
+  }
+  document.addEventListener('pointerdown', ev => {
+    const g = ev.target.closest && ev.target.closest('.grip'); if (!g || d || ev.button > 0 || roTeam()) return;
+    const card = g.closest('.card.item'), t = curT(); if (!card || !t) return;
+    ev.preventDefault(); try { g.setPointerCapture(ev.pointerId); } catch (e) { /* ohne Capture weiter */ }
+    d = { g, card, id: card.dataset.iid, t, pid: ev.pointerId, y: ev.clientY, y0: ev.clientY, s0: scrollY, to: 0, raf: 0 };
+    card.classList.add('dragging'); document.body.classList.add('dragmode'); update(); d.raf = requestAnimationFrame(loop);
+  });
+  document.addEventListener('pointermove', ev => { if (d && ev.pointerId === d.pid) { d.y = ev.clientY; update(); } });
+  const end = (ev, ok) => {
+    if (!d || ev.pointerId !== d.pid) return;
+    const x = d; update(); stop(); d = null;
+    const i = x.t.items.findIndex(v => v.id === x.id); if (!ok || i < 0 || x.to === i) return;
+    const [it] = x.t.items.splice(i, 1); x.t.items.splice(Math.min(x.to, x.t.items.length), 0, it); touch(x.t); render();
+  };
+  document.addEventListener('pointerup', ev => end(ev, true)); document.addEventListener('pointercancel', ev => end(ev, false));
 })();
 // UTP-Links: Verbindung schon beim Berühren des Knopfs aufbauen, damit die Erklärung schneller aufgeht.
 document.addEventListener('pointerdown', ev => {

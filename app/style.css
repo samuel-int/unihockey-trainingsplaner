@@ -210,3 +210,10 @@ body.running #nav { display: none; } body.running #app { padding-bottom: 110px; 
 .person { padding: 7px 0; border-top: 1px solid var(--line); } .person:first-child { border-top: 0; } .person .row { min-height: 0; } .person .chip { flex: none; }
 .clubwarn { margin: 8px 0; } .clubwarn .btn { margin-top: 6px; }
 @media print { .rolebtn { display: none !important; } }
+
+/* Übungen per Griff umordnen; Regelfokus bei der letzten Übung */
+.grip { flex: none; width: 34px; min-height: 42px; padding: 0; border: 0; background: transparent; color: var(--muted, #888); font-size: 1.3rem; line-height: 1; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.card.item.dragging { position: relative; z-index: 20; opacity: .95; box-shadow: 0 8px 22px rgba(0, 0, 0, .3); cursor: grabbing; }
+.card.item.dropb { box-shadow: 0 -4px 0 var(--pri); } .card.item.dropa { box-shadow: 0 4px 0 var(--pri); }
+body.dragmode { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+.regelbox { margin: 8px 0 2px; padding: 8px 10px; border-radius: 10px; background: rgba(46, 158, 107, .14); border-left: 4px solid #2e9e6b; font-size: .92rem; line-height: 1.35; }

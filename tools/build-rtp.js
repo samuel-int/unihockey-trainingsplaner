@@ -280,9 +280,9 @@ for (const st of out.stages) for (const b of st.blocks) for (const p of [b.main,
 out.spAlias = SP_ALIAS; out.efAlias = EF_ALIAS;
 console.log('Vereinheitlicht (Anzahl Blöcke):', JSON.stringify(REPORT, null, 1));
 
-// 2) Themen, die in der App nicht erscheinen sollen: Ausbildungsverantwortliche (AV), Trainingsbesuch AV, SpuSp-Gespräche, Staffmeeting, Vereinsmeeting.
+// 2) Themen, die in der App nicht erscheinen sollen: Kick-off und Elterninfo, Ausbildungsverantwortliche (AV), Trainingsbesuch AV, SpuSp-Gespräche, Staffmeeting, Vereinsmeeting.
 // Gefiltert wird in Ereignissen der Blöcke und Wochen, in den Ausbildungsgedanken und im Glossar.
-const DROP = /Staffmeeting|Vereinsmeeting|SpuSp|Trainingsbesuch|Ausbildungsverantwortliche|\bAV\b/;
+const DROP = /Kick-off|Elterninfo|Staffmeeting|Vereinsmeeting|SpuSp|Trainingsbesuch|Ausbildungsverantwortliche|\bAV\b/;
 let dropped = 0;
 for (const st of out.stages) {
   for (const b of st.blocks) {

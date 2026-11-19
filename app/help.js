@@ -3,10 +3,10 @@
 window.HELP = [
   { id: 'start', t: 'Erste Schritte', s: [
     '<b>App installieren:</b> Android (Chrome): Menü ⋮ → «App installieren». iPhone (Safari): Teilen-Symbol → «Zum Home-Bildschirm». Danach öffnest du die App wie jede andere, auch ohne Internet.',
-    '<b>Du bist Assistenz?</b> Öffne auf diesem Handy den Einladungslink, den dir dein Trainer geschickt hat (zum Beispiel per WhatsApp). Gib deinen Namen ein und tippe auf «Beitreten»: Die Mannschaft mit allen Trainings erscheint, du musst nichts abtippen.',
+    '<b>Du bist Assistenz?</b> Öffne auf diesem Handy den Einladungslink, den dir dein Trainer geschickt hat. Gib deinen Namen ein und tippe auf «Beitreten»: Die Mannschaft mit allen Trainings erscheint, du musst nichts abtippen.',
     '<b>Du bist Trainer?</b> Tippe unten auf «Teams» und dann auf «+ Neu», um deine Mannschaft anzulegen. Wie du deine Assistenz einlädst, steht weiter unten.',
     '<b>Du bist Funktionär im Vorstand?</b> Öffne den Funktionärs-Link, den dir der Admin geschickt hat, und gib deinen Namen ein. Du siehst dann alle Mannschaften, kannst aber nichts ändern.',
-    'Es gibt kein Konto und kein Passwort. Der Einladungslink ist dein Schlüssel zur Mannschaft: Schick ihn nicht weiter und stell ihn nicht in grosse Gruppenchats. Wer du bist, siehst du oben rechts (Name und Rolle).'
+    'Der Einladungslink ist dein Schlüssel zur Mannschaft: Schick ihn nicht weiter und stell ihn nicht in grosse Gruppenchats. Wer du bist, siehst du oben rechts (Name und Rolle).'
   ] },
   { id: 'roles', t: 'Rollen und Name', s: [
     '<b>Name:</b> Beim ersten Mal fragt die App «Wie heisst du?». Der Name erscheint bei den anderen Personen deiner Mannschaft (verschlüsselt; nur die Mannschaft kann ihn lesen). Ändern kannst du ihn oben rechts: Tippe auf Name und Rolle.',
@@ -17,9 +17,9 @@ window.HELP = [
     '<b>Rolle wechseln:</b> Hast du mehrere Rollen (zum Beispiel Admin und Trainer), tippe oben rechts auf Name und Rolle und wähle die Rolle. In der Rolle Admin oder Funktionär siehst du alle Mannschaften des Vereins; in den anderen Rollen nur deine eigenen.'
   ] },
   { id: 'prep', t: 'Ein Training vorbereiten', s: [
-    'Tippe unten auf «Trainings» und dann auf das Training. Es öffnet sich der Editor mit allen Übungen in der Reihenfolge der Halle.',
+    'Tippe unten auf «Trainings» und dann auf das Training. Es öffnet sich der Editor mit allen Übungen in der Reihenfolge der Halle. Die Reihenfolge änderst du, indem du eine Übung am Griff ⠿ links ziehst.',
     'Tippe eine Übung an, um sie aufzuklappen. Bei den meisten Übungen steht oben die <b>Erklärung</b>: Beschreibung, Keypoints, Coachingfragen und Variationen.',
-    'Skizzen und Videos gibt es im UTP von swiss unihockey. Tippe dafür bei der Übung auf «Im UTP öffnen» (braucht Internet).',
+    'Skizzen und Videos gibt es im UTP von swiss unihockey. Tippe dafür bei der Übung auf «Im UTP öffnen».',
     'Im Kopf des Trainings steht die Zeile <b>«Material»</b>. Sie zählt zusammen, was du für das ganze Training brauchst. Stimmt bei einer Übung etwas nicht, schreib es im Feld «Material» der Übung hin.',
     'Mit «‹ Vorheriges» und «Nächstes ›» (oder Wischen) blätterst du zum Training davor oder danach.',
     'Die Karte «Vom letzten Training» zeigt dir, was ihr beim letzten Mal notiert habt.'
