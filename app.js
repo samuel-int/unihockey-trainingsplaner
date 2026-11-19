@@ -105,14 +105,15 @@ function applyTeam(t, tm, sess, fresh) {
 const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; tm.sessions = teamSessions(tm); DB.teams.push(tm); return tm; };
 const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); return x && x.id === tm.id; });
 
-// Spielerliste (optional, Datensparsamkeit: nur diese Felder): tm.players = [{ id, first, last, rn (Rückennummer), role: 'T' Teilnehmer/in | 'L' Leiter/in }]. Keine J+S-Personennummer (bewusst): der AWK-Export enthält Namen, die man in Excel ersetzt; «Vorname Name» muss pro Mannschaft eindeutig sein (nameKey).
+// Spielerliste (optional, Datensparsamkeit: nur diese Felder): tm.players = [{ id, name (ein freies Feld, z. B. «Daniel M.» oder «Anna Muster»; alte Daten mit first/last werden in name überführt), rn (Rückennummer), role: 'T' Teilnehmer/in | 'L' Leiter/in }]. Keine J+S-Personennummer (bewusst): der AWK-Export enthält den Namen genau wie erfasst, den man in Excel ersetzt; der Name muss pro Mannschaft eindeutig sein (nameKey).
 // Anwesenheit am Training: t.att = { <playerId>: 1 }, t.jsType = 'Training' | 'Wettkampf' | 'Trainingstag' (fehlt = Training). Beides bleibt auf dem Gerät: slim() entfernt t.att beim Teilen, teamMeta() lässt players weg.
 const playersOf = tm => Array.isArray(tm && tm.players) ? tm.players : [];
-const pName = p => [p.first, p.last].filter(Boolean).join(' ') || 'Ohne Namen';
-const nameKey = p => [p.first, p.last].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();   // Vergleich ohne Gross/Klein, Akzente, doppelte Leerzeichen
+const plName = p => String(p.name != null ? p.name : [p.first, p.last].filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();   // ein Namensfeld; alte Spieler (first/last) werden hier und in cleanPlayer zusammengesetzt
+const pName = p => plName(p) || 'Ohne Namen';
+const nameKey = p => plName(p).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();   // Vergleich ohne Gross/Klein, Akzente, doppelte Leerzeichen
 const dupKeys = tm => { const c = {}; playersOf(tm).forEach(p => { const k = nameKey(p); if (k) c[k] = (c[k] || 0) + 1; }); return c; };
 const DUP_HINT = 'Gibt es schon – ergänze z. B. einen zweiten Buchstaben im Namen (Daniel M. / Daniel Mü.).';
-const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
+const cleanPlayer = p => ({ id: String(p.id || uid()), name: plName(p).slice(0, 80), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
 const JS_TYPES = ['Training', 'Wettkampf', 'Trainingstag'];
 const isMatch = t => !!t && t.kind === 'match';   // Wettkampf statt Training (Abschnitt «Wettkämpfe»)
 const jsTypeOf = t => isMatch(t) ? 'Wettkampf' : JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
@@ -121,17 +122,15 @@ const attCount = (t, tm) => playersOf(tm).filter(p => attOf(t)[p.id]).length;
 const teamMeta = (tm, withPlayers) => { const c = JSON.parse(JSON.stringify(tm)); if (!withPlayers) delete c.players; else if (Array.isArray(c.players)) c.players.forEach(p => { if (p) delete p.jsnr; }); return c; };
 function mergePlayers(tm, list) {   // Spielerliste per Spieler-id zusammenführen
   tm.players = playersOf(tm);
-  for (const p0 of list) { if (!p0 || !(p0.first || p0.last)) continue; const p = cleanPlayer(p0), i = tm.players.findIndex(x => x.id === p.id); if (i >= 0) tm.players[i] = p; else tm.players.push(p); }
+  for (const p0 of list) { if (!p0) continue; const p = cleanPlayer(p0); if (!p.name) continue; const i = tm.players.findIndex(x => x.id === p.id); if (i >= 0) tm.players[i] = p; else tm.players.push(p); }
 }
-// Mehrfacheingabe: eine Person pro Zeile, «Vorname Name» oder «Name, Vorname», eine Zahl (5–12 Ziffern, frühere J+S-Nummer) am Zeilenende wird abgeschnitten und nicht gespeichert (cut)
+// Mehrfacheingabe: eine Person pro Zeile = ein Name (frei, Komma wird nicht umgedreht), eine Zahl (5–12 Ziffern, frühere J+S-Nummer) am Zeilenende wird abgeschnitten und nicht gespeichert (cut)
 function parsePlayers(text) {
   return String(text || '').split(/\r?\n/).map(l => l.replace(/\t/g, ' ').replace(/;/g, ',').trim()).filter(Boolean).map(l => {
     let cut = false; const m = l.match(/^(.*?)[\s,]+(\d{5,12})$/); if (m) { l = m[1]; cut = true; }
-    l = l.replace(/[,\s]+$/, '').trim(); let first, last;
-    if (l.includes(',')) { const [a, ...r] = l.split(','); last = a.trim(); first = r.join(' ').trim(); }
-    else { const w = l.split(/\s+/); first = w.shift() || ''; last = w.join(' '); }
-    return { first, last, cut };
-  }).filter(p => p.first || p.last);
+    l = l.replace(/[,\s]+$/, '').replace(/\s+/g, ' ').trim();
+    return { name: l.slice(0, 80), cut };
+  }).filter(p => p.name);
 }
 function migrate() {
   if (!Array.isArray(DB.teams)) DB.teams = []; if (!DB.seasons || typeof DB.seasons !== 'object') DB.seasons = {};
@@ -154,6 +153,7 @@ function migrate() {
     tm.sessions = legacySessions(tm, sc && Array.isArray(sc.days) ? sc.days : tm.days, sc && sc.time ? sc.time : tm.time); ch = true;
   }
   for (const tm of DB.teams) if (Array.isArray(tm.players)) for (const p of tm.players) if (p && 'jsnr' in p) { delete p.jsnr; ch = true; }   // J+S-Nummern werden nicht mehr gespeichert
+  for (const tm of DB.teams) if (Array.isArray(tm.players)) tm.players.forEach((p, i) => { if (p && ('first' in p || 'last' in p || typeof p.name !== 'string')) { tm.players[i] = cleanPlayer(p); ch = true; } });   // alte Spieler: name = Vorname + Name, first/last entfernt (gleiche id)
   if (ch) flush();
 }
 function applyFlow(t) {   // Mannschaft/Datum aus dem Neu-Ablauf auf ein frisch erstelltes Training übertragen
@@ -1202,8 +1202,7 @@ function playersCard(tm) {
 function playerModal() {
   const f = S.pf;
   modal(`<h2>${f.id ? 'Person bearbeiten' : 'Person hinzufügen'}</h2>
-    <div class="grid2"><label>Vorname<input data-b="pl:first" value="${esc(f.first)}" autocomplete="off"></label><label>Name<input data-b="pl:last" value="${esc(f.last)}" autocomplete="off"></label>
-</div>
+    <label>Name<input data-b="pl:name" value="${esc(f.name)}" placeholder="z. B. Anna Muster" autocomplete="off"></label>
     <div class="grid2"><label>Rückennummer (optional)<input inputmode="numeric" data-b="pl:rn" value="${esc(f.rn)}" autocomplete="off"></label><label>Rolle<select data-b="pl:role">${opt('T', 'Teilnehmer/in', f.role)}${opt('L', 'Leiter/in', f.role)}</select></label></div>
     ${f.err ? `<p class="small warn">${esc(f.err)}</p>` : ''}
     <p class="small muted">Es werden bewusst nur Name, Rolle und Rückennummer gespeichert (keine J+S-Personennummer, kein Geburtsdatum, keine AHV-Nummer, keine Adresse). Der Name muss in der Mannschaft eindeutig sein.</p>
@@ -1211,10 +1210,10 @@ function playerModal() {
 }
 function bulkModal() {
   const b = S.pb, tm = teamById(b.tm), prev = b.prev;
-  modal(`<h2>Mehrere Personen einfügen</h2><p class="small">Eine Person pro Zeile: «Vorname Name» oder «Name, Vorname». Du kannst eine Liste aus Excel oder einem Dokument einfügen. Zahlen am Zeilenende (frühere J+S-Nummern) werden nicht gespeichert. Gleiche Namen sind nicht möglich – bei zwei Personen mit demselben Namen ergänze z. B. einen zweiten Buchstaben (Daniel M. / Daniel Mü.).</p>
+  modal(`<h2>Mehrere Personen einfügen</h2><p class="small">Eine Person pro Zeile, der Name so, wie er in der Liste stehen soll (z. B. «Anna Muster» oder «Daniel M.»). Du kannst eine Liste aus Excel oder einem Dokument einfügen. Zahlen am Zeilenende (frühere J+S-Nummern) werden nicht gespeichert. Gleiche Namen sind nicht möglich – bei zwei Personen mit demselben Namen ergänze z. B. einen zweiten Buchstaben (Daniel M. / Daniel Mü.).</p>
     <textarea rows="7" data-b="pb:text" placeholder="Anna Muster&#10;Beispiel, Ben&#10;Chiara Probe" autocomplete="off">${esc(b.text)}</textarea>
     <label class="chk"><input type="checkbox" data-b="pb:leader" ${b.leader ? 'checked' : ''}>Als Leiter/in eintragen</label>
-    ${prev ? `<p class="small nomargin"><b>${prev.length} Person${prev.length === 1 ? '' : 'en'} erkannt</b> – prüfe Vor- und Nachname:</p><ul class="small">${prev.slice(0, 40).map(p => `<li>${esc(p.first)} <b>${esc(p.last)}</b>${p.cut ? ' <span class="muted">(Nummer abgeschnitten)</span>' : ''}${p.dup ? ' <span class="warn">' + esc(DUP_HINT) + ' Wird nicht hinzugefügt.</span>' : ''}</li>`).join('')}${prev.length > 40 ? `<li>… und ${prev.length - 40} weitere</li>` : ''}</ul>${prev.some(p => p.cut) ? '<p class="small muted">Zahlen am Zeilenende werden nicht übernommen – die App speichert keine J+S-Nummern.</p>' : ''}` : ''}
+    ${prev ? `<p class="small nomargin"><b>${prev.length} Person${prev.length === 1 ? '' : 'en'} erkannt</b> – prüfe die Namen:</p><ul class="small">${prev.slice(0, 40).map(p => `<li><b>${esc(p.name)}</b>${p.cut ? ' <span class="muted">(Nummer abgeschnitten)</span>' : ''}${p.dup ? ' <span class="warn">' + esc(DUP_HINT) + ' Wird nicht hinzugefügt.</span>' : ''}</li>`).join('')}${prev.length > 40 ? `<li>… und ${prev.length - 40} weitere</li>` : ''}</ul>${prev.some(p => p.cut) ? '<p class="small muted">Zahlen am Zeilenende werden nicht übernommen – die App speichert keine J+S-Nummern.</p>' : ''}` : ''}
     <div class="row wrap"><button class="btn ${prev ? '' : 'pri'}" data-a="pbPrev">Prüfen</button>${prev ? `<button class="btn pri" data-a="pbAdd">${prev.filter(p => !p.dup).length} hinzufügen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div>`);
 }
 const isDupPlayer = (tm, p) => { const k = nameKey(p); return !!k && playersOf(tm).some(x => nameKey(x) === k); };
@@ -1245,7 +1244,7 @@ function awSection(tm) {
 const JS_AWK = 'PERSONENNUMMER;FUNKTION;DATUM;AKTIVITAETSTYP;ZEIT;DAUER;ORT', JS_ACT = 'AKTIVITAETSTYP;DATUM;ZEIT;DAUER;ORT;FOKUS';
 const JS_DUR = { Training: [60, 75, 90, 120, 150, 180, 210, 240, 270, 300], Trainingstag: [240, 300] };
 const csvCell = v => { v = String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); return /[;"]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-const csvName = p => [p.last, p.first].filter(Boolean).join(' ').replace(/[;"\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Ohne Namen';   // AWK: «Name Vorname», ohne Semikolon, Anführungszeichen und Zeilenumbruch
+const csvName = p => plName(p).replace(/[;"\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Ohne Namen';   // AWK: der Name genau wie erfasst, ohne Semikolon, Anführungszeichen und Zeilenumbruch
 const jsMin = t => +t.min || total(t) || 0;   // J+S: geplante Trainingsdauer (Feld «Dauer», Hallenzeit), sonst Summe der Blöcke
 function jsExport(tm, kind) {
   const r = awRange(tm), ts = awTrainings(tm, r), pl = playersOf(tm), awk = kind === 'awk', rows = [], issues = [], names = new Set(), seenP = new Map(), used = new Set(); let wk = false;
@@ -1270,8 +1269,8 @@ function jsModal(tm, kind) {
     <p>${r.rows ? `<b>${r.rows} Zeile${r.rows === 1 ? '' : 'n'}</b> aus ${r.nt} Training${r.nt === 1 ? '' : 's'}, ${dmy(r.from)} bis ${dmy(r.to)}.` : '<b>Für diesen Zeitraum gibt es nichts zu exportieren.</b>'}</p>
     ${r.issues.length ? `<div class="gbox"><b>Das fällt auf</b><ul class="small">${r.issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '<p class="small muted">Beim Prüfen ist nichts aufgefallen.</p>'}
     <p class="small"><b>Reihenfolge in der NDS:</b> zuerst die Personen, dann die Aktivitäten, dann die Anwesenheitskontrolle. Personen und Aktivitäten müssen im Kurs schon erfasst sein. Importiere erst nach Kursende.</p>
-    ${act ? '' : `<div class="gbox"><b>So geht es mit den Namen</b><ol class="small"><li>Datei in Excel oder einem Editor öffnen.</li><li>Mit «Suchen und Ersetzen» jeden Namen in der Spalte PERSONENNUMMER durch die J+S-Personennummer aus der NDS ersetzen. In Excel «Gesamten Zelleninhalt vergleichen» ankreuzen, sonst wird «Muster Anna» auch in «Muster Annabelle» ersetzt.</li><li>Als CSV (UTF-8) speichern.</li><li>In der NDS importieren.</li></ol>
-      <p class="small nomargin"><b>Diese ${r.names.length} Name${r.names.length === 1 ? '' : 'n'} musst du ersetzen</b> (Format «Name Vorname»):</p><ul class="small" style="max-height:30vh;overflow:auto">${r.names.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+    ${act ? '' : `<div class="gbox"><b>So geht es mit den Namen</b><ol class="small"><li>Datei in Excel oder einem Editor öffnen.</li><li>Mit «Suchen und Ersetzen» jeden Namen in der Spalte PERSONENNUMMER durch die J+S-Personennummer aus der NDS ersetzen. In Excel «Gesamten Zelleninhalt vergleichen» ankreuzen, sonst wird «Anna Muster» auch in «Anna Musterfrau» ersetzt.</li><li>Als CSV (UTF-8) speichern.</li><li>In der NDS importieren.</li></ol>
+      <p class="small nomargin"><b>Diese ${r.names.length} Name${r.names.length === 1 ? '' : 'n'} musst du ersetzen</b> (genau so, wie sie in der Spielerliste stehen):</p><ul class="small" style="max-height:30vh;overflow:auto">${r.names.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
     <p class="small warn">Die Datei enthält Namen von Kindern. Lösche sie nach dem Import, auch aus dem Download-Ordner und aus Mails oder Cloud-Ablagen.</p>`}
     <p class="small muted">Ob die NDS die Datei annimmt, zeigt sich erst beim Import; hier lässt sich das nicht vorab prüfen.</p>
     <div class="row wrap"><button class="btn pri" data-a="awDownload" ${r.rows ? '' : 'disabled'}>Herunterladen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
@@ -1397,7 +1396,7 @@ function viewEnd(t, step) {
   const players = tm && pl.length ? `<details class="card rfpl" ${S.rfPl ? 'open' : ''}><summary><b>Spieler</b> <span class="muted small">optional – wer fiel auf?</span></summary>
     <p class="small muted">Für Gespräche und Beurteilung. Die Notizen bleiben auf deinem Gerät (und im Mannschaftsraum) und gehen beim Teilen nie mit.</p>
     ${plist.map(p => { const x = pm[p.id] && typeof pm[p.id] === 'object' ? pm[p.id] : {}; return `<div class="rfp"><div class="row"><span class="nm">${esc(pName(p))}</span><div class="pick3 wide">${pk(x.k === 'plus', `data-a="reflPl" data-id="${esc(p.id)}" data-k="plus"`, '⭐ Stark')}${pk(x.k === 'foerdern', `data-a="reflPl" data-id="${esc(p.id)}" data-k="foerdern"`, '🌱 Fördern')}</div></div>
-      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(p.first || pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
+      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
   return head('Training abschliessen', null, '', sub, ctxBar('end', 2)) + `<div class="muted small">${metaLine(t, true)}</div>
   ${prev && String(prev.refl.change || '').trim() ? `<div class="card rfprev small"><b>Dein Vorsatz vom letzten Mal:</b> ${esc(String(prev.refl.change).trim())}</div>` : ''}
   <div class="card"><h3 class="nomargin">Ziel erreicht?</h3>${ziel || sp ? `<p class="small rfz">${sp ? `<b>${esc(sp)}</b> – ` : ''}${ziel ? 'Die Spieler*innen können ' + esc(ziel) : ''}</p>` : ''}
@@ -1526,7 +1525,7 @@ function viewEndMatch(t) {
     <p class="small muted">Für Gespräche und Beurteilung. Notizen, Tore und Assists bleiben auf deinem Gerät (und im Mannschaftsraum) und gehen beim Teilen nie mit.</p>
     ${plist.map(p => { const x = pm[p.id] && typeof pm[p.id] === 'object' ? pm[p.id] : {}, s = st[p.id] && typeof st[p.id] === 'object' ? st[p.id] : {}; return `<div class="rfp"><div class="row"><span class="nm">${esc(pName(p))}</span><div class="pick3 wide">${pk(x.k === 'plus', `data-a="reflPl" data-id="${esc(p.id)}" data-k="plus"`, '⭐ Stark')}${pk(x.k === 'foerdern', `data-a="reflPl" data-id="${esc(p.id)}" data-k="foerdern"`, '🌱 Fördern')}</div></div>
       <div class="rfst"><label>Tore<input type="number" inputmode="numeric" min="0" data-b="rf:pg:${esc(p.id)}" value="${esc(s.g ?? '')}"></label><label>Assists<input type="number" inputmode="numeric" min="0" data-b="rf:pa:${esc(p.id)}" value="${esc(s.a ?? '')}"></label></div>
-      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(p.first || pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
+      <label class="rfwhy" ${x.k ? '' : 'hidden'}>Notiz zu ${esc(pName(p))}<textarea data-b="rf:pn:${esc(p.id)}" rows="2">${esc(x.note || '')}</textarea></label></div>`; }).join('')}</details>` : '';
   return head('Wettkampf abschliessen', null, '', sub, ctxBar('end', 2)) + `<div class="muted small">${metaLine(t, true)}</div>
   <div class="card"><h3 class="nomargin">Resultat</h3>${games}${mm.art === 'Turnier' ? '<button class="btn sm" data-a="mgAdd">+ Spiel</button>' : ''}</div>
   <div class="card"><h3 class="nomargin">Ziel erreicht?</h3>${mm.ziel.trim() ? `<p class="small rfz"><b>Ziel:</b> ${esc(mm.ziel.trim())}</p>` : '<p class="small muted rfz">Kein Ziel notiert – du kannst es im Eintrag ergänzen.</p>'}
@@ -2109,11 +2108,11 @@ const A = {
   },
   attAll() { const t = curT(); t.att = attOf(t); playersOf(teamOf(t)).forEach(p => t.att[p.id] = 1); touch(t); render(); },
   attNone() { const t = curT(), tm = teamOf(t); playersOf(tm).forEach(p => delete attOf(t)[p.id]); touch(t); render(); },
-  plAdd(el) { S.pf = { tm: el.dataset.tm, id: '', first: '', last: '', rn: '', role: el.dataset.role === 'L' ? 'L' : 'T' }; playerModal(); },
-  plEdit(el) { const tm = teamById(el.dataset.tm), p = playersOf(tm).find(x => x.id === el.dataset.id); if (!p) return; S.pf = { tm: tm.id, ...p }; playerModal(); },
+  plAdd(el) { S.pf = { tm: el.dataset.tm, id: '', name: '', rn: '', role: el.dataset.role === 'L' ? 'L' : 'T' }; playerModal(); },
+  plEdit(el) { const tm = teamById(el.dataset.tm), p = playersOf(tm).find(x => x.id === el.dataset.id); if (!p) return; S.pf = { tm: tm.id, ...p, name: plName(p) }; playerModal(); },
   plSave() {
     const f = S.pf, tm = teamById(f.tm); if (!tm) return;
-    if (!String(f.first).trim() && !String(f.last).trim()) return toast('Bitte einen Namen eingeben');
+    if (!plName(f)) return toast('Bitte einen Namen eingeben');
     const p = cleanPlayer({ ...f, u: Date.now() }), k = nameKey(p);
     if (k && playersOf(tm).some(x => x.id !== p.id && nameKey(x) === k)) { f.err = DUP_HINT; return playerModal(); }
     f.err = ''; tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
