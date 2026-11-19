@@ -105,29 +105,32 @@ function applyTeam(t, tm, sess, fresh) {
 const mkTeam = (name, stage) => { const tm = { id: uid(), name, stage: stage || DB.stage, color: TEAM_COLORS[DB.teams.length % TEAM_COLORS.length], ort: '', days: [2, 4], time: '', min: 0 }; tm.sessions = teamSessions(tm); DB.teams.push(tm); return tm; };
 const teamTrainings = tm => DB.trainings.filter(t => { const x = teamOf(t); return x && x.id === tm.id; });
 
-// Spielerliste (optional, Datensparsamkeit: nur diese Felder): tm.players = [{ id, first, last, jsnr (nur Ziffern), rn (Rückennummer), role: 'T' Teilnehmer/in | 'L' Leiter/in }].
+// Spielerliste (optional, Datensparsamkeit: nur diese Felder): tm.players = [{ id, first, last, rn (Rückennummer), role: 'T' Teilnehmer/in | 'L' Leiter/in }]. Keine J+S-Personennummer (bewusst): der AWK-Export enthält Namen, die man in Excel ersetzt; «Vorname Name» muss pro Mannschaft eindeutig sein (nameKey).
 // Anwesenheit am Training: t.att = { <playerId>: 1 }, t.jsType = 'Training' | 'Wettkampf' | 'Trainingstag' (fehlt = Training). Beides bleibt auf dem Gerät: slim() entfernt t.att beim Teilen, teamMeta() lässt players weg.
 const playersOf = tm => Array.isArray(tm && tm.players) ? tm.players : [];
 const pName = p => [p.first, p.last].filter(Boolean).join(' ') || 'Ohne Namen';
-const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), jsnr: String(p.jsnr || '').replace(/\D/g, '').slice(0, 12), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
+const nameKey = p => [p.first, p.last].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();   // Vergleich ohne Gross/Klein, Akzente, doppelte Leerzeichen
+const dupKeys = tm => { const c = {}; playersOf(tm).forEach(p => { const k = nameKey(p); if (k) c[k] = (c[k] || 0) + 1; }); return c; };
+const DUP_HINT = 'Gibt es schon – ergänze z. B. einen zweiten Buchstaben im Namen (Daniel M. / Daniel Mü.).';
+const cleanPlayer = p => ({ id: String(p.id || uid()), first: String(p.first || '').trim().slice(0, 60), last: String(p.last || '').trim().slice(0, 60), rn: String(p.rn ?? '').replace(/\s/g, '').slice(0, 3), role: p.role === 'L' ? 'L' : 'T', ...(+p.u > 0 ? { u: +p.u } : {}) });
 const JS_TYPES = ['Training', 'Wettkampf', 'Trainingstag'];
 const isMatch = t => !!t && t.kind === 'match';   // Wettkampf statt Training (Abschnitt «Wettkämpfe»)
 const jsTypeOf = t => isMatch(t) ? 'Wettkampf' : JS_TYPES.includes(t.jsType) ? t.jsType : 'Training';
 const attOf = t => t.att && typeof t.att === 'object' ? t.att : {};
 const attCount = (t, tm) => playersOf(tm).filter(p => attOf(t)[p.id]).length;
-const teamMeta = (tm, withPlayers) => { const c = JSON.parse(JSON.stringify(tm)); if (!withPlayers) delete c.players; return c; };
+const teamMeta = (tm, withPlayers) => { const c = JSON.parse(JSON.stringify(tm)); if (!withPlayers) delete c.players; else if (Array.isArray(c.players)) c.players.forEach(p => { if (p) delete p.jsnr; }); return c; };
 function mergePlayers(tm, list) {   // Spielerliste per Spieler-id zusammenführen
   tm.players = playersOf(tm);
   for (const p0 of list) { if (!p0 || !(p0.first || p0.last)) continue; const p = cleanPlayer(p0), i = tm.players.findIndex(x => x.id === p.id); if (i >= 0) tm.players[i] = p; else tm.players.push(p); }
 }
-// Mehrfacheingabe: eine Person pro Zeile, «Vorname Name» oder «Name, Vorname», optional J+S-Nummer (5–12 Ziffern) am Zeilenende
+// Mehrfacheingabe: eine Person pro Zeile, «Vorname Name» oder «Name, Vorname», eine Zahl (5–12 Ziffern, frühere J+S-Nummer) am Zeilenende wird abgeschnitten und nicht gespeichert (cut)
 function parsePlayers(text) {
   return String(text || '').split(/\r?\n/).map(l => l.replace(/\t/g, ' ').replace(/;/g, ',').trim()).filter(Boolean).map(l => {
-    let nr = ''; const m = l.match(/^(.*?)[\s,]+(\d{5,12})$/); if (m) { l = m[1]; nr = m[2]; }
+    let cut = false; const m = l.match(/^(.*?)[\s,]+(\d{5,12})$/); if (m) { l = m[1]; cut = true; }
     l = l.replace(/[,\s]+$/, '').trim(); let first, last;
     if (l.includes(',')) { const [a, ...r] = l.split(','); last = a.trim(); first = r.join(' ').trim(); }
     else { const w = l.split(/\s+/); first = w.shift() || ''; last = w.join(' '); }
-    return { first, last, jsnr: nr };
+    return { first, last, cut };
   }).filter(p => p.first || p.last);
 }
 function migrate() {
@@ -150,6 +153,7 @@ function migrate() {
     const sc = DB.seasons[tm.id];
     tm.sessions = legacySessions(tm, sc && Array.isArray(sc.days) ? sc.days : tm.days, sc && sc.time ? sc.time : tm.time); ch = true;
   }
+  for (const tm of DB.teams) if (Array.isArray(tm.players)) for (const p of tm.players) if (p && 'jsnr' in p) { delete p.jsnr; ch = true; }   // J+S-Nummern werden nicht mehr gespeichert
   if (ch) flush();
 }
 function applyFlow(t) {   // Mannschaft/Datum aus dem Neu-Ablauf auf ein frisch erstelltes Training übertragen
@@ -1187,10 +1191,11 @@ function viewAtt(t) {
 }
 
 function playersCard(tm) {
-  const l = playersOf(tm);
+  const l = playersOf(tm), dk = dupKeys(tm), hasDup = Object.values(dk).some(n => n > 1);
   return `<details class="card tsec" data-k="pl" ${S.tsec.has('pl') ? 'open' : ''}><summary><b>Spielerliste</b> <span class="muted small">${l.length ? l.length + (l.length === 1 ? ' Person' : ' Personen') : 'noch leer'}</span></summary>
-    <p class="small muted">Pro Person nur Name, J+S-Personennummer, Rolle und Rückennummer. Die Liste bleibt auf diesem Gerät und geht beim Teilen eines Trainings nie mit.</p>
-    ${l.map(p => `<button class="prow" data-a="plEdit" data-tm="${esc(tm.id)}" data-id="${esc(p.id)}"><span class="pn">${esc(pName(p))}</span><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>${p.jsnr ? `<span class="small muted">${esc(p.jsnr)}</span>` : '<span class="small warn">ohne J+S-Nr.</span>'}<span class="muted">›</span></button>`).join('')}
+    <p class="small muted">Pro Person nur Name, Rolle und Rückennummer. Der Name muss in der Mannschaft eindeutig sein. Die Liste bleibt auf diesem Gerät und geht beim Teilen eines Trainings nie mit.</p>
+    ${hasDup ? `<p class="small warn">Es gibt gleiche Namen. ${DUP_HINT}</p>` : ''}
+    ${l.map(p => `<button class="prow" data-a="plEdit" data-tm="${esc(tm.id)}" data-id="${esc(p.id)}"><span class="pn">${esc(pName(p))}</span><span class="small muted">${[p.rn && '#' + p.rn, p.role === 'L' && 'Leiter/in'].filter(Boolean).map(esc).join(' · ')}</span>${dk[nameKey(p)] > 1 ? '<span class="small warn">Name doppelt</span>' : ''}<span class="muted">›</span></button>`).join('')}
     ${l.length ? '' : '<p class="small muted">Noch niemand erfasst. Du kannst dich selbst als Leiter/in eintragen.</p>'}
     <div class="row wrap" style="margin-top:10px"><button class="btn" data-a="plAdd" data-tm="${esc(tm.id)}" data-role="T">+ Spieler/in</button><button class="btn" data-a="plAdd" data-tm="${esc(tm.id)}" data-role="L">+ Leiter/in</button><button class="btn" data-a="plBulk" data-tm="${esc(tm.id)}">Mehrere einfügen</button></div></details>`;
 }
@@ -1198,20 +1203,22 @@ function playerModal() {
   const f = S.pf;
   modal(`<h2>${f.id ? 'Person bearbeiten' : 'Person hinzufügen'}</h2>
     <div class="grid2"><label>Vorname<input data-b="pl:first" value="${esc(f.first)}" autocomplete="off"></label><label>Name<input data-b="pl:last" value="${esc(f.last)}" autocomplete="off"></label>
-    <label>J+S-Personennummer<input inputmode="numeric" data-b="pl:jsnr" value="${esc(f.jsnr)}" placeholder="z.B. 123456789" autocomplete="off"></label><label>Rückennummer (optional)<input inputmode="numeric" data-b="pl:rn" value="${esc(f.rn)}" autocomplete="off"></label></div>
-    <label>Rolle<select data-b="pl:role">${opt('T', 'Teilnehmer/in', f.role)}${opt('L', 'Leiter/in', f.role)}</select></label>
-    <p class="small muted">Die J+S-Personennummer brauchst du nur für den Export an J+S. Es werden bewusst keine weiteren Personendaten gespeichert (kein Geburtsdatum, keine AHV-Nummer, keine Adresse).</p>
+</div>
+    <div class="grid2"><label>Rückennummer (optional)<input inputmode="numeric" data-b="pl:rn" value="${esc(f.rn)}" autocomplete="off"></label><label>Rolle<select data-b="pl:role">${opt('T', 'Teilnehmer/in', f.role)}${opt('L', 'Leiter/in', f.role)}</select></label></div>
+    ${f.err ? `<p class="small warn">${esc(f.err)}</p>` : ''}
+    <p class="small muted">Es werden bewusst nur Name, Rolle und Rückennummer gespeichert (keine J+S-Personennummer, kein Geburtsdatum, keine AHV-Nummer, keine Adresse). Der Name muss in der Mannschaft eindeutig sein.</p>
     <div class="row wrap"><button class="btn pri" data-a="plSave">Speichern</button>${f.id ? '<button class="btn danger" data-a="plDel">Entfernen</button>' : ''}<button class="btn" data-a="close">Abbrechen</button></div>`);
 }
 function bulkModal() {
   const b = S.pb, tm = teamById(b.tm), prev = b.prev;
-  modal(`<h2>Mehrere Personen einfügen</h2><p class="small">Eine Person pro Zeile: «Vorname Name» oder «Name, Vorname», optional mit J+S-Personennummer am Zeilenende. Du kannst eine Liste aus Excel oder einem Dokument einfügen.</p>
-    <textarea rows="7" data-b="pb:text" placeholder="Anna Muster 123456789&#10;Beispiel, Ben&#10;Chiara Probe" autocomplete="off">${esc(b.text)}</textarea>
+  modal(`<h2>Mehrere Personen einfügen</h2><p class="small">Eine Person pro Zeile: «Vorname Name» oder «Name, Vorname». Du kannst eine Liste aus Excel oder einem Dokument einfügen. Zahlen am Zeilenende (frühere J+S-Nummern) werden nicht gespeichert. Gleiche Namen sind nicht möglich – bei zwei Personen mit demselben Namen ergänze z. B. einen zweiten Buchstaben (Daniel M. / Daniel Mü.).</p>
+    <textarea rows="7" data-b="pb:text" placeholder="Anna Muster&#10;Beispiel, Ben&#10;Chiara Probe" autocomplete="off">${esc(b.text)}</textarea>
     <label class="chk"><input type="checkbox" data-b="pb:leader" ${b.leader ? 'checked' : ''}>Als Leiter/in eintragen</label>
-    ${prev ? `<p class="small nomargin"><b>${prev.length} Person${prev.length === 1 ? '' : 'en'} erkannt</b> – prüfe Vor- und Nachname:</p><ul class="small">${prev.slice(0, 40).map(p => `<li>${esc(p.first)} <b>${esc(p.last)}</b>${p.jsnr ? ' · ' + esc(p.jsnr) : ' · <span class="warn">ohne Nr.</span>'}${p.dup ? ' <span class="muted">(schon in der Liste, wird übersprungen)</span>' : ''}</li>`).join('')}${prev.length > 40 ? `<li>… und ${prev.length - 40} weitere</li>` : ''}</ul>` : ''}
+    ${prev ? `<p class="small nomargin"><b>${prev.length} Person${prev.length === 1 ? '' : 'en'} erkannt</b> – prüfe Vor- und Nachname:</p><ul class="small">${prev.slice(0, 40).map(p => `<li>${esc(p.first)} <b>${esc(p.last)}</b>${p.cut ? ' <span class="muted">(Nummer abgeschnitten)</span>' : ''}${p.dup ? ' <span class="warn">' + esc(DUP_HINT) + ' Wird nicht hinzugefügt.</span>' : ''}</li>`).join('')}${prev.length > 40 ? `<li>… und ${prev.length - 40} weitere</li>` : ''}</ul>${prev.some(p => p.cut) ? '<p class="small muted">Zahlen am Zeilenende werden nicht übernommen – die App speichert keine J+S-Nummern.</p>' : ''}` : ''}
     <div class="row wrap"><button class="btn ${prev ? '' : 'pri'}" data-a="pbPrev">Prüfen</button>${prev ? `<button class="btn pri" data-a="pbAdd">${prev.filter(p => !p.dup).length} hinzufügen</button>` : ''}<button class="btn" data-a="close">Abbrechen</button></div>`);
 }
-const isDupPlayer = (tm, p) => playersOf(tm).some(x => (x.first + ' ' + x.last).trim().toLowerCase() === (p.first + ' ' + p.last).trim().toLowerCase() || (p.jsnr && x.jsnr === p.jsnr));
+const isDupPlayer = (tm, p) => { const k = nameKey(p); return !!k && playersOf(tm).some(x => nameKey(x) === k); };
+const bulkMark = (tm, list) => { const seen = new Set(); return list.map(p => { const k = nameKey(p), dup = isDupPlayer(tm, p) || (!!k && seen.has(k)); if (k) seen.add(k); return { ...p, dup }; }); };   // schon in der Liste oder weiter oben in der Eingabe
 
 // Anwesenheit / J+S auf der Mannschaftsseite
 function awRange(tm) {
@@ -1230,7 +1237,7 @@ function awSection(tm) {
       ${pl.map(p => { const n = rec.filter(t => attOf(t)[p.id]).length; return `<tr><th>${esc(pName(p))}</th><td class="tot">${rec.length ? n + '/' + rec.length + ' · ' + Math.round(100 * n / rec.length) + '%' : '–'}</td>${ts.map(t => attCount(t, tm) ? `<td class="${attOf(t)[p.id] ? 'y' : 'n'}">${attOf(t)[p.id] ? '✓' : '·'}</td>` : '<td class="x">–</td>').join('')}</tr>`; }).join('')}</tbody></table></div>
       <p class="small muted">${ts.length} Training${ts.length === 1 ? '' : 's'} im Zeitraum, bei ${rec.length} ist die Anwesenheit erfasst («–» = nicht erfasst, zählt nicht mit). Tippe auf ein Datum, um die Anwesenheit zu bearbeiten.</p>` : '<p class="small muted">In diesem Zeitraum gibt es keine Trainings dieser Mannschaft.</p>'}
     <div class="col"><button class="btn pri" data-a="awExport" data-tm="${esc(tm.id)}" data-k="awk">AWK für J+S exportieren (CSV)</button><button class="btn" data-a="awExport" data-tm="${esc(tm.id)}" data-k="act">Aktivitäten exportieren (CSV)</button></div>
-    <p class="small muted">Für die Abrechnung bei Jugend+Sport (Import in die NDS). Vor dem Download siehst du, was auffällt.</p>`;
+    <p class="small muted">Für die Abrechnung bei Jugend+Sport (Import in die NDS). Die AWK-Datei enthält Namen statt J+S-Nummern, die du vor dem Import mit «Suchen und Ersetzen» austauschst. Vor dem Download siehst du, was auffällt.</p>`;
   return `<details class="card tsec" data-k="aw" ${S.tsec.has('aw') ? 'open' : ''}><summary><b>Anwesenheit / J+S</b></summary>${body}</details>`;
 }
 
@@ -1238,9 +1245,10 @@ function awSection(tm) {
 const JS_AWK = 'PERSONENNUMMER;FUNKTION;DATUM;AKTIVITAETSTYP;ZEIT;DAUER;ORT', JS_ACT = 'AKTIVITAETSTYP;DATUM;ZEIT;DAUER;ORT;FOKUS';
 const JS_DUR = { Training: [60, 75, 90, 120, 150, 180, 210, 240, 270, 300], Trainingstag: [240, 300] };
 const csvCell = v => { v = String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); return /[;"]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+const csvName = p => [p.last, p.first].filter(Boolean).join(' ').replace(/[;"\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Ohne Namen';   // AWK: «Name Vorname», ohne Semikolon, Anführungszeichen und Zeilenumbruch
 const jsMin = t => +t.min || total(t) || 0;   // J+S: geplante Trainingsdauer (Feld «Dauer», Hallenzeit), sonst Summe der Blöcke
 function jsExport(tm, kind) {
-  const r = awRange(tm), ts = awTrainings(tm, r), pl = playersOf(tm), awk = kind === 'awk', rows = [], issues = [], noNr = new Set(), used = new Set(); let wk = false;
+  const r = awRange(tm), ts = awTrainings(tm, r), pl = playersOf(tm), awk = kind === 'awk', rows = [], issues = [], names = new Set(), seenP = new Map(), used = new Set(); let wk = false;
   ts.forEach(t => {
     const type = jsTypeOf(t), min = jsMin(t), lab = `${fmtDate(t.date)} «${t.title || 'Ohne Titel'}»`, tr = type === 'Training';
     if (awk && !attCount(t, tm)) { issues.push(`${lab}: Anwesenheit nicht erfasst – nicht in der Datei.`); return; }
@@ -1248,12 +1256,12 @@ function jsExport(tm, kind) {
     if (type === 'Wettkampf') { if (!wk) issues.push('Wettkampf: J+S verlangt je nach Nutzergruppe eine Dauer oder keine. Prüfe das beim Import in der NDS.'); wk = true; }
     else if (!min || !JS_DUR[type].includes(min)) issues.push(`${lab}: Dauer ${min || 'leer'} Min. – J+S akzeptiert je nach Sportart nur bestimmte Werte, z. B. 60, 75, 90. Der Wert steht trotzdem in der Datei.`);
     const zeit = tr ? t.start : '', ort = tr ? t.ort : '', base = [dmy(t.date), type, zeit, min || '', ort];
-    if (awk) { pl.forEach(p => { if (!attOf(t)[p.id]) return; if (!p.jsnr) { noNr.add(pName(p)); return; } rows.push([p.jsnr, p.role === 'L' ? 'Leiter/in' : 'Teilnehmer/in', ...base]); used.add(t.id); }); }
+    if (awk) { pl.forEach(p => { if (!attOf(t)[p.id]) return; const nm = csvName(p); names.add(nm); seenP.set(p.id, p); rows.push([nm, p.role === 'L' ? 'Leiter/in' : 'Teilnehmer/in', ...base]); used.add(t.id); }); }
     else { rows.push([type, dmy(t.date), zeit, min || '', ort, '']); used.add(t.id); }
   });
-  if (noNr.size) issues.unshift(`Ohne J+S-Personennummer, ihre Zeilen fehlen in der Datei: ${[...noNr].join(', ')}.`);
+  if (awk) { const dk = dupKeys(tm), d = [...new Set([...seenP.values()].filter(p => dk[nameKey(p)] > 1).map(csvName))]; if (d.length) issues.unshift(`Gleicher Name mehrfach in der Mannschaft: ${d.join(', ')}. Mit «Ersetzen» liessen sich diese Personen nicht auseinanderhalten. Ändere einen der Namen in der Spielerliste (z. B. Daniel M. / Daniel Mü.) und exportiere nochmals.`); }
   const text = '﻿' + [awk ? JS_AWK : JS_ACT, ...rows.map(x => x.map(csvCell).join(';'))].join('\r\n') + '\r\n';
-  return { kind, rows: rows.length, nt: used.size, issues, text, from: r.from, to: r.to, name: `${awk ? 'awk' : 'aktivitaeten'}_${norm(tm.name).replace(/ /g, '-') || 'mannschaft'}_${r.from}_${r.to}.csv` };
+  return { kind, rows: rows.length, nt: used.size, issues, names: [...names].sort((a, b) => a.localeCompare(b, 'de')), text, from: r.from, to: r.to, name: `${awk ? 'awk' : 'aktivitaeten'}_${norm(tm.name).replace(/ /g, '-') || 'mannschaft'}${awk ? '_NAMEN_ERSETZEN' : ''}_${r.from}_${r.to}.csv` };
 }
 function jsModal(tm, kind) {
   const r = S.jsx = jsExport(tm, kind), act = kind === 'act';
@@ -1262,7 +1270,10 @@ function jsModal(tm, kind) {
     <p>${r.rows ? `<b>${r.rows} Zeile${r.rows === 1 ? '' : 'n'}</b> aus ${r.nt} Training${r.nt === 1 ? '' : 's'}, ${dmy(r.from)} bis ${dmy(r.to)}.` : '<b>Für diesen Zeitraum gibt es nichts zu exportieren.</b>'}</p>
     ${r.issues.length ? `<div class="gbox"><b>Das fällt auf</b><ul class="small">${r.issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '<p class="small muted">Beim Prüfen ist nichts aufgefallen.</p>'}
     <p class="small"><b>Reihenfolge in der NDS:</b> zuerst die Personen, dann die Aktivitäten, dann die Anwesenheitskontrolle. Personen und Aktivitäten müssen im Kurs schon erfasst sein. Importiere erst nach Kursende.</p>
-    <p class="small muted">Die Datei enthält J+S-Personennummern – gib sie nur an J+S weiter. Ob die NDS sie annimmt, zeigt sich erst beim Import; hier lässt sich das nicht vorab prüfen.</p>
+    ${act ? '' : `<div class="gbox"><b>So geht es mit den Namen</b><ol class="small"><li>Datei in Excel oder einem Editor öffnen.</li><li>Mit «Suchen und Ersetzen» jeden Namen in der Spalte PERSONENNUMMER durch die J+S-Personennummer aus der NDS ersetzen. In Excel «Gesamten Zelleninhalt vergleichen» ankreuzen, sonst wird «Muster Anna» auch in «Muster Annabelle» ersetzt.</li><li>Als CSV (UTF-8) speichern.</li><li>In der NDS importieren.</li></ol>
+      <p class="small nomargin"><b>Diese ${r.names.length} Name${r.names.length === 1 ? '' : 'n'} musst du ersetzen</b> (Format «Name Vorname»):</p><ul class="small" style="max-height:30vh;overflow:auto">${r.names.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+    <p class="small warn">Die Datei enthält Namen von Kindern. Lösche sie nach dem Import, auch aus dem Download-Ordner und aus Mails oder Cloud-Ablagen.</p>`}
+    <p class="small muted">Ob die NDS die Datei annimmt, zeigt sich erst beim Import; hier lässt sich das nicht vorab prüfen.</p>
     <div class="row wrap"><button class="btn pri" data-a="awDownload" ${r.rows ? '' : 'disabled'}>Herunterladen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
 }
 
@@ -1279,7 +1290,7 @@ async function buildTeamShare() {
   const up = all.filter(t => !t.date || t.date >= today).length;
   modal(`<h2>«${esc(tm.name)}» teilen</h2><p class="small">Du gibst eine Kopie weiter: Mannschaft (Name, Stufe, Farbe, Trainingszeiten, Saison-Einstellung) und, wenn du willst, ihre Trainings samt den eigenen Übungen und Notizen darin. Anwesenheiten und Spieler-Notizen gehen nie mit. Danach gleicht sich nichts mehr ab; wer etwas ändert, teilt neu.</p>
     <label>Trainings mitgeben<select data-b="tsh:which">${opt('up', `Nur kommende (${up})`, o.which)}${opt('all', `Alle (${all.length})`, o.which)}${opt('none', 'Keine', o.which)}</select></label>
-    <label class="chk"><input type="checkbox" data-b="tsh:pl" ${o.pl ? 'checked' : ''}>Spielerliste mitgeben (Namen und J+S-Nummern)</label>
+    <label class="chk"><input type="checkbox" data-b="tsh:pl" ${o.pl ? 'checked' : ''}>Spielerliste mitgeben (Namen, Rolle, Rückennummer)</label>
     ${o.pl ? '<p class="small warn">Der Link enthält dann Personendaten, auch von Kindern. Schicke ihn nur direkt an die Person, die ihn braucht – nicht in Gruppenchats und nicht öffentlich.</p>' : ''}
     <div class="qr">${qrSvg(url, 'Für einen QR-Code ist das zu umfangreich – nutze den Link oder die Datei.')}</div>
     <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="shFile">Als Datei</button><button class="btn" data-a="close">Schliessen</button></div>`);
@@ -1615,7 +1626,7 @@ function importData(d) {
     modal(`<h2>Mannschaft importieren?</h2><p><b>${teamDot({ color: m0.color || '#6b7785' })}${esc(m0.name)}</b> <span class="muted small">${esc((stageById(m0.stage) || {}).name || '')}</span></p>
       <p class="small">${byId ? 'Diese Mannschaft hast du schon. Name, Trainingszeiten und Saison-Einstellung werden aktualisiert.' : byName ? 'Du hast schon eine Mannschaft mit diesem Namen. Ihre Einstellungen bleiben; Trainings und Spielerliste werden dort ergänzt.' : 'Die Mannschaft wird neu angelegt.'}</p>
       <ul class="small"><li>${d.t.length ? `${d.t.length} Training${d.t.length === 1 ? '' : 's'}${dup ? ` (${dup} schon vorhanden – werden durch die importierte Version ersetzt; deine Anwesenheiten dazu bleiben)` : ''}` : 'Keine Trainings'}</li>
-      <li>${np ? `<b>Spielerliste enthalten:</b> ${np} Person${np === 1 ? '' : 'en'} (mit Namen und J+S-Nummern)${byName ? ', wird mit deiner Liste zusammengeführt' : ''}` : 'Keine Spielerliste enthalten'}</li>${d.c && d.c.length ? `<li>${d.c.length} eigene Übung${d.c.length === 1 ? '' : 'en'}</li>` : ''}</ul>
+      <li>${np ? `<b>Spielerliste enthalten:</b> ${np} Person${np === 1 ? '' : 'en'} (mit Namen)${byName ? ', wird mit deiner Liste zusammengeführt' : ''}` : 'Keine Spielerliste enthalten'}</li>${d.c && d.c.length ? `<li>${d.c.length} eigene Übung${d.c.length === 1 ? '' : 'en'}</li>` : ''}</ul>
       <div class="row"><button class="btn pri" data-a="impOk">Importieren</button><button class="btn" data-a="close">Abbrechen</button></div>`);
     return;
   }
@@ -1719,7 +1730,8 @@ function spContent(tm, sp) {
   const ts = teamTrainings(tm).map(t => ({ ...spClone(t), teamId: tm.id, team: tm.name })), c = [], n = {}, seen = new Set();
   ts.forEach(t => t.items.forEach(it => { const cx = customOf(it); if (cx && !seen.has(cx.id)) { seen.add(cx.id); c.push(spClone(cx)); } for (const k of [it.lib, matNoteKey(it)]) if (k && DB.notes[k]) n[k] = spClone(DB.notes[k]); }));
   const d = (sp && sp.del) || {};
-  return { v: 1, team: spClone(tm), trainings: ts, season: SP_SEASON(DB.seasons && DB.seasons[tm.id]), custom: c, notes: n, del: { t: { ...d.t }, p: { ...d.p } } };
+  const team = spClone(tm); if (Array.isArray(team.players)) team.players.forEach(p => { if (p) delete p.jsnr; });   // keine J+S-Nummern im Raum
+  return { v: 1, team, trainings: ts, season: SP_SEASON(DB.seasons && DB.seasons[tm.id]), custom: c, notes: n, del: { t: { ...d.t }, p: { ...d.p } } };
 }
 function spNorm(c) {
   const t = (c && c.team) || {}, d = (c && c.del) || {};
@@ -2097,12 +2109,14 @@ const A = {
   },
   attAll() { const t = curT(); t.att = attOf(t); playersOf(teamOf(t)).forEach(p => t.att[p.id] = 1); touch(t); render(); },
   attNone() { const t = curT(), tm = teamOf(t); playersOf(tm).forEach(p => delete attOf(t)[p.id]); touch(t); render(); },
-  plAdd(el) { S.pf = { tm: el.dataset.tm, id: '', first: '', last: '', jsnr: '', rn: '', role: el.dataset.role === 'L' ? 'L' : 'T' }; playerModal(); },
+  plAdd(el) { S.pf = { tm: el.dataset.tm, id: '', first: '', last: '', rn: '', role: el.dataset.role === 'L' ? 'L' : 'T' }; playerModal(); },
   plEdit(el) { const tm = teamById(el.dataset.tm), p = playersOf(tm).find(x => x.id === el.dataset.id); if (!p) return; S.pf = { tm: tm.id, ...p }; playerModal(); },
   plSave() {
     const f = S.pf, tm = teamById(f.tm); if (!tm) return;
     if (!String(f.first).trim() && !String(f.last).trim()) return toast('Bitte einen Namen eingeben');
-    const p = cleanPlayer({ ...f, u: Date.now() }); tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
+    const p = cleanPlayer({ ...f, u: Date.now() }), k = nameKey(p);
+    if (k && playersOf(tm).some(x => x.id !== p.id && nameKey(x) === k)) { f.err = DUP_HINT; return playerModal(); }
+    f.err = ''; tm.players = playersOf(tm); const i = tm.players.findIndex(x => x.id === p.id);
     if (i >= 0) tm.players[i] = p; else tm.players.push(p);
     S.tsec.add('pl'); save(); closeModal(); render(); toast('Gespeichert');
   },
@@ -2112,12 +2126,12 @@ const A = {
     toast(`«${pName(p)}» entfernt`, 'Rückgängig', () => { p.u = Date.now(); spDel('p', tm.id, p.id, true); tm.players.splice(Math.min(i, tm.players.length), 0, p); save(); render(); });
   },
   plBulk(el) { S.pb = { tm: el.dataset.tm, text: '', leader: false, prev: null }; bulkModal(); },
-  pbPrev() { const b = S.pb, tm = teamById(b.tm); b.prev = parsePlayers(b.text).map(p => ({ ...p, dup: isDupPlayer(tm, p) })); bulkModal(); },
+  pbPrev() { const b = S.pb, tm = teamById(b.tm); b.prev = bulkMark(tm, parsePlayers(b.text)); bulkModal(); },
   pbAdd() {
-    const b = S.pb, tm = teamById(b.tm), list = parsePlayers(b.text).filter(p => !isDupPlayer(tm, p)); if (!list.length) return toast('Nichts Neues zum Hinzufügen');
+    const b = S.pb, tm = teamById(b.tm), all = bulkMark(tm, parsePlayers(b.text)), list = all.filter(p => !p.dup), skipped = all.length - list.length; if (!list.length) return toast(skipped ? 'Diese Namen gibt es schon – ergänze z. B. einen zweiten Buchstaben im Namen' : 'Nichts Neues zum Hinzufügen');
     tm.players = playersOf(tm); const added = list.map(p => cleanPlayer({ ...p, role: b.leader ? 'L' : 'T', u: Date.now() })); tm.players.push(...added);
     S.tsec.add('pl'); S.pb = null; save(); closeModal(); render();
-    toast(`${added.length} Person${added.length === 1 ? '' : 'en'} hinzugefügt`, 'Rückgängig', () => { const ids = new Set(added.map(p => p.id)); tm.players = tm.players.filter(p => !ids.has(p.id)); ids.forEach(x => spDel('p', tm.id, x)); save(); render(); });
+    toast(`${added.length} Person${added.length === 1 ? '' : 'en'} hinzugefügt${skipped ? `, ${skipped} nicht (Name gibt es schon)` : ''}`, 'Rückgängig', () => { const ids = new Set(added.map(p => p.id)); tm.players = tm.players.filter(p => !ids.has(p.id)); ids.forEach(x => spDel('p', tm.id, x)); save(); render(); });
   },
   awExport(el) { jsModal(teamById(el.dataset.tm), el.dataset.k); },
   awDownload() { const r = S.jsx; if (!r || !r.rows) return; saveBlob(r.name, new Blob([r.text], { type: 'text/csv;charset=utf-8' })); toast('Datei heruntergeladen'); },
@@ -2136,7 +2150,7 @@ const A = {
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
   shFile() { download(S.share.file, S.share.data); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
-  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams, s: DB.seasons, season: DB.season, ...(DB.spaces && Object.keys(DB.spaces).length ? { sp: DB.spaces } : {}) }); },
+  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams.map(tm => teamMeta(tm, true)), s: DB.seasons, season: DB.season, ...(DB.spaces && Object.keys(DB.spaces).length ? { sp: DB.spaces } : {}) }); },
   impFile() { $('#file').click(); },
   impOk: doImport,
   spSetup(el) {
