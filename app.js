@@ -450,7 +450,7 @@ function removeTrainings(list) {
   toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); list.forEach(t => { t.updated = Date.now(); spDel('t', (teamOf(t) || {}).id, t.id, true); }); save(); render(); });
 }
 function modal(html) { $('#modal').innerHTML = `<div class="backdrop" data-a="close"></div><div class="sheet">${html}</div>`; $('#modal').className = 'on'; }
-function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; S.join = null; }
+function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; S.join = null; S.nameCb = null; S.fjoin = null; S.restore = null; }
 const go = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
 const goR = h => { if (location.hash === '#' + h) render(); else location.replace('#' + h); };   // ersetzt den Verlaufseintrag: nach dem Löschen führt Zurück nicht auf die gelöschte Seite
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
@@ -544,6 +544,8 @@ function trailOf() {
     if (b) return [...(up || [['RTP', '/rtp'], [st.name, '/rtp', st.id]]), ['Block ' + b.nr]];
     return [['RTP']];
   }
+  if (p[0] === 'admin') return [['Mehr', '/more'], ['Verein']];
+  if (p[0] === 'clubsetup') return [['Mehr', '/more'], ['Verein einrichten']];
   if (p[0] === 'more') return [['Mehr']];
   if (p[0] === 'help') return [['Mehr', '/more'], ['Hilfe']];
   return [TR, ['Liste']];
@@ -553,7 +555,7 @@ function crumbBar(run) {   // run: Hallenmodus, nur zur Orientierung (ohne Links
   return `<nav class="crumbs${run ? ' run' : ''}" aria-label="Brotkrumen">${tr.map(([l, h, st], i) => (i ? '<i aria-hidden="true">›</i>' : '') + (i < last && h && !run ? `<a href="#${esc(h)}"${st ? ` data-a="crumbStage" data-k="${esc(st)}"` : ''}>${esc(l)}</a>` : `<span${i === last ? ' class="cur" aria-current="page"' : ''}>${esc(l)}</span>`)).join('')}</nav>`;
 }
 // Kopfzeile: Brotkrumen, Titel, optional Untertitel (HTML, selbst escapen), rechts Aktionen, optional Kontextleiste (Ablauf/Auswahl). Der 2. Parameter (früher Zurück-Ziel) wird nicht mehr gebraucht, die Brotkrumen führen zurück.
-const head = (title, back, right = '', sub = '', bar = '') => `<header class="top">${crumbBar()}<div class="trow"><div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
+const head = (title, back, right = '', sub = '', bar = '') => `<header class="top"><div class="hrow">${crumbBar()}${roleBtn()}</div><div class="trow"><div class="ttl"><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>${bar}</header>`;
 // Kontextleiste: laufender Ablauf (Neues Training) oder Auswahlmodus (Übung für ein Training) – immer sichtbar und abbrechbar
 function ctxBar(step) {
   const f = S.flow, pt = S.pick && getT(S.pick);
@@ -569,13 +571,16 @@ const doneBar = h => S.done && S.done.h.split('?')[0] === h ? `<div class="card 
 function done(text, h, undo) { S.done = { text, h, undo }; go(h); }
 
 // ---------- Ansicht: Trainings ----------
-const isFresh = () => !DB.teams.length && !DB.trainings.length && !Object.keys(DB.spaces || {}).length;   // erster Start: nichts angelegt, kein Mannschaftsraum
+const isFresh = () => !DB.teams.length && !DB.trainings.length && !Object.keys(DB.spaces || {}).length && !DB.club;   // erster Start: nichts angelegt, kein Mannschaftsraum
 function viewWelcome() {
   return `<div class="welcome"><h1>Willkommen 👋</h1><p class="muted">Dein Trainingsplaner für Unihockey. Es gibt kein Konto und kein Passwort. Such dir den passenden Weg aus.</p>
+  ${SYNC_ON ? `<div class="card"><h2 class="nomargin">Dein Name</h2><label>Wie heisst du?<input data-b="me:name" value="${esc(meGet().name)}" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off"></label><p class="small muted nomargin">Der Name erscheint bei den anderen Personen deiner Mannschaft. Du kannst ihn jederzeit oben rechts ändern.</p></div>` : ''}
   <div class="card"><h2 class="nomargin">1 · App installieren</h2><div id="instSlot">${installHtml()}</div></div>
-  <div class="card"><h2 class="nomargin">2 · Ich bin Co-Trainer</h2><p class="small">Öffne den Link, den dir dein Haupttrainer geschickt hat (zum Beispiel per WhatsApp), auf diesem Handy. Die Mannschaft erscheint dann automatisch.</p>
+  <div class="card"><h2 class="nomargin">2 · Ich bin Assistenz</h2><p class="small">Öffne den Link, den dir dein Trainer geschickt hat (zum Beispiel per WhatsApp), auf diesem Handy. Die Mannschaft erscheint dann automatisch.</p>
     <details><summary>Link stattdessen hier einfügen</summary><input id="joinLink" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Einladungslink einfügen"><p><button class="btn pri" data-a="joinPaste">Mannschaft öffnen</button></p></details></div>
-  <div class="card"><h2 class="nomargin">3 · Ich bin Haupttrainer</h2><p class="small">Lege deine Mannschaft an: Name, Stufe und Trainingszeiten. Danach planst du Trainings und lädst deine Co-Trainer ein.</p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></div>
+  <div class="card"><h2 class="nomargin">3 · Ich bin Trainer</h2><p class="small">Lege deine Mannschaft an: Name, Stufe und Trainingszeiten. Danach planst du Trainings und lädst deine Assistenz ein.</p><a class="btn pri" href="#/team/new">Mannschaft anlegen</a></div>
+  ${SYNC_ON ? `<div class="card"><h2 class="nomargin">4 · Ich bin Funktionär</h2><p class="small">Öffne den Link, den dir der Admin des Vereins geschickt hat. Du siehst dann alle Mannschaften, kannst aber nichts ändern.</p>
+    <details><summary>Link stattdessen hier einfügen</summary><input id="funcLink" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Funktionärs-Link einfügen"><p><button class="btn pri" data-a="funcPaste">Als Funktionär beitreten</button></p></details></div>` : ''}
   <p class="center"><a href="#${kid('/help')}">Hilfe</a></p></div>`;
 }
 function viewHome() {
@@ -1151,7 +1156,7 @@ function viewTeam(id) {
   return head(tm.name, '/teams', `<a class="btn" href="#${kid('/team/' + tm.id + '/edit')}">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
   <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button>${canShareTeam(tm) ? `<button class="btn" data-a="teamShare" data-k="${tm.id}">Mannschaft teilen</button>` : ''}</div>
-  ${spCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
+  ${spCard(tm)}${memCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
 function viewTeamForm(id) {
@@ -1169,7 +1174,7 @@ function viewTeamForm(id) {
       <div class="row"><label class="grow">Ort / Halle<input data-b="ms:${esc(x.id)}:ort" value="${esc(x.ort)}" placeholder="${esc(f.ort || 'wie Standard')}"></label><button class="btn sm danger" data-a="mDelS" data-id="${esc(x.id)}" aria-label="Trainingszeit ${i + 1} entfernen">Entfernen</button></div></div>`).join('') || '<p class="small muted">Noch keine Trainingszeit – ohne sie plant die Saison keine Tage.</p>'}
     <button class="btn block" data-a="mAddS">+ Trainingszeit hinzufügen</button>
     <p class="small muted">Diese Zeiten füllen neue Trainings (Datum → passende Einheit: Start, Ort, Dauer) und die Saisonplanung der Mannschaft vor. Zwei Einheiten am selben Tag sind möglich.</p>
-    <button class="btn pri block" data-a="saveTeam">Speichern</button>${tm ? `<button class="btn danger block" data-a="delTeam" data-id="${tm.id}">Mannschaft löschen${n ? ` (${n} Trainings)` : ''}</button>` : ''}</div>`;
+    <button class="btn pri block" data-a="saveTeam">Speichern</button>${tm && !(spOf(tm.id) || {}).via ? `<button class="btn danger block" data-a="delTeam" data-id="${tm.id}">Mannschaft löschen${n ? ` (${n} Trainings)` : ''}</button>` : ''}</div>`;
 }
 
 // ---------- Spielerliste, Anwesenheit, Export für J+S ----------
@@ -1573,6 +1578,7 @@ addEventListener('appinstalled', () => { installEvt = null; if (location.hash ==
 function viewMore() {
   return head('Mehr') + `
   <a class="card choice" href="#${kid('/help')}"><b>❓ Hilfe</b><span class="small muted">Erste Schritte, Training vorbereiten, Hallenmodus, Anwesenheit, Reflexion und häufige Fragen</span></a>
+  ${clubMoreCard()}
   ${isHelperDevice() ? '' : `<div class="card"><h2 class="nomargin">Teilen &amp; Sichern</h2><p class="small">${SYNC_ON ? 'Deine Co-Trainer lädst du auf der Mannschaftsseite über «Mannschaft teilen» ein: Sie gleichen sich automatisch ab. ' : ''}Einzelne Trainings gibst du im Training über «Teilen» als Kopie weiter (Link, QR-Code oder Datei) – für Trainer anderer Mannschaften. Hier kannst du alle Daten auf einmal sichern oder auf ein anderes Gerät übertragen.${SYNC_ON ? ' Die Sicherungsdatei enthält dann auch die Zugangsschlüssel zu deinen Mannschaftsräumen – bewahre sie sicher auf und gib sie nicht weiter.' : ''}</p>
     <div class="row wrap"><button class="btn pri" data-a="expAll">Alles exportieren</button><button class="btn" data-a="impFile">Datei importieren</button><button class="btn" data-a="shareApp">App-Link teilen</button></div><input type="file" id="file" accept=".json,application/json" hidden></div>`}
   <div class="card"><h2 class="nomargin">Als App installieren</h2>${installEvt ? '<p><button class="btn pri" data-a="install">Jetzt installieren</button></p>' : ''}
@@ -1671,13 +1677,13 @@ function doImport() {
 // Raum-Inhalt (Klartext): { v: 1, team (mit players), trainings, season, custom, notes, del }. Zusammenführen: spMerge (rein lokal). Ohne SYNC_ON ist alles unsichtbar.
 const SP_BAD = 'Dieser Link ist ungültig oder wurde erneuert – bitte den Haupttrainer um einen neuen Link.';
 const SP_PRUNE = 400 * 864e5;   // Löschmarkierungen älter als rund 13 Monate verfallen
-const SP_RANK = { r: 1, w: 2, o: 3 };
-const SP_ROLE = { o: 'Besitzer', w: 'Co-Trainer', r: 'Nur lesen' };
+const SP_RANK = { F: 0, r: 1, w: 2, o: 3, A: 4 };
+const SP_ROLE = { o: 'Trainer', w: 'Assistenz', r: 'Nur lesen', A: 'Admin', F: 'Funktionär' };
 const spOf = id => (DB.spaces && DB.spaces[id]) || null;
 // Rollen: Teilen und Sichern liegt beim Haupttrainer (eigene Mannschaften oder Besitzer eines Mannschaftsraums). Wer nur als Co-Trainer (w) oder Nur-Lesen (r) in Mannschaftsräumen ist, braucht es nicht.
 const canShareTeam = tm => { const sp = tm && spOf(tm.id); return !sp || sp.role === 'o'; };   // Mannschaft teilen / Einladen / einzelne Trainings der Mannschaft teilen
 const canShare = t => { const tm = teamOf(t); return !tm || canShareTeam(tm); };
-const isHelperDevice = () => SYNC_ON && DB.teams.length > 0 && DB.teams.every(tm => { const sp = spOf(tm.id); return sp && (sp.role === 'w' || sp.role === 'r'); });   // alle Mannschaften stammen aus Räumen als Co-Trainer/Nur lesen, keine eigene
+const isHelperDevice = () => SYNC_ON && DB.teams.length > 0 && DB.teams.every(tm => { const sp = spOf(tm.id); return sp && (sp.role === 'w' || sp.role === 'r' || sp.role === 'F'); });   // alle Mannschaften stammen aus Räumen als Co-Trainer/Nur lesen, keine eigene
 const spIds = () => SYNC_ON ? Object.keys(DB.spaces || {}).filter(id => teamById(id)) : [];
 const spClone = x => JSON.parse(JSON.stringify(x));
 const spSafe = k => typeof k === 'string' && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
@@ -1719,7 +1725,9 @@ function spErr(e) {
   if (m === 'zu gross') return { state: 'err', msg: 'Fehler: Die Mannschaft ist für den Abgleich zu gross.' };
   if (m === 'kein schreibrecht') return { state: 'err', msg: 'Fehler: Mit diesem Zugang darfst du nur lesen.' };
   if (m === 'limit erreicht') return { state: 'err', msg: 'Fehler: Der Server hat sein Limit erreicht.' };
-  if (m === 'nur besitzer') return { state: 'err', msg: 'Fehler: Das darf nur der Haupttrainer.' };
+  if (m === 'nur besitzer' || m === 'nur besitzer oder admin') return { state: 'err', msg: 'Fehler: Das darf nur der Trainer oder der Admin.' };
+  if (m === 'nur admin') return { state: 'err', msg: 'Fehler: Das darf nur der Admin.' };
+  if (/^code ungueltig/.test(m)) return { state: 'err', msg: 'Der Code stimmt nicht, oder der Verein ist schon eingerichtet.' };
   return { state: 'err', msg: 'Fehler: ' + (m || 'unbekannt') };
 }
 
@@ -1743,7 +1751,7 @@ const spCanon = c => sj(spNorm(c));
 // Gelöscht-Markierung (del) gewinnt gegen einen Eintrag mit kleinerem Zeitstempel. Mannschaftseinstellungen und Saison: grösseres tm.u gewinnt. Rolle «nur lesen»: der Server gewinnt immer.
 const spWins = (l, r, ul, ur) => ur !== ul ? ur > ul : sj(r) > sj(l);
 function spMerge(tm, sp, rm) {
-  const ro = sp.role === 'r', now = Date.now(), before = spCanon(spContent(tm, sp)), od = (rm && rm.del) || {}, del = { t: {}, p: {} };
+  const ro = spRo(sp), now = Date.now(), before = spCanon(spContent(tm, sp)), od = (rm && rm.del) || {}, del = { t: {}, p: {} };
   for (const kind of ['t', 'p']) for (const src of [sp.del && sp.del[kind], od[kind]]) for (const [id, ms] of Object.entries(src || {})) { if (!spSafe(id) || !(+ms > 0) || +ms < now - SP_PRUNE) continue; del[kind][id] = Math.max(del[kind][id] || 0, +ms); }
   sp.del = del;
   if (rm) {
@@ -1793,7 +1801,7 @@ function spSync(id) {
   if (SP.pend.has(id)) return SP.pend.get(id);
   const p = spLock(() => { SP.pend.delete(id); return spSyncInner(id); }); SP.pend.set(id, p); return p;
 }
-async function spSyncInner(id) {
+async function spSyncCore(id) {
   const sp = spOf(id), tm = teamById(id); if (!sp || !tm) return false;
   const set = (state, msg, changed) => { SP.st[id] = { state, msg }; spPaint(); if (changed) spRender(); };
   if (!navigator.onLine) { const e = spErr(new TypeError()); set(e.state, e.msg); return false; }
@@ -1807,15 +1815,25 @@ async function spSyncInner(id) {
       if (rm && (rm.v !== 1 || !rm.team || rm.team.id !== tm.id)) throw spErrObj('Dieser Raum passt nicht zu dieser Mannschaft oder braucht eine neuere App.');
       const changed = !!(spMerge(tm, sp, rm) | normSp()), mine = spContent(tm, sp), canon = spCanon(mine);
       if (changed) flush();
-      if (sp.role === 'r' || (rm && canon === spCanon(rm))) { sp.ver = row.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
+      if (spRo(sp) || (rm && canon === spCanon(rm))) { sp.ver = row.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
       const put = (await spRpc('space_put', { p_id: sp.id, p_t: sp.t, p_data: await spEnc(sp.k, mine), p_ver: row.ver }))[0];
       if (put && put.ok) { sp.ver = put.ver; sp.hash = await spHash(canon); sp.last = new Date().toISOString(); flush(); set('ok', '', changed); return true; }
     }
     throw spErrObj('Gleichzeitige Änderungen – bitte später nochmals abgleichen');
   } catch (e) { const x = spErr(e); set(x.state, x.msg); return false; }
 }
-function spAuto() { if (!SYNC_ON) return; for (const id of spIds()) if (!(SP.st[id] && SP.st[id].state === 'bad')) spSync(id); }
-function spDirty() { if (!SYNC_ON || !DB.spaces || !Object.keys(DB.spaces).length) return; clearTimeout(SP.t); SP.t = setTimeout(spAuto, 3000); }
+async function spSyncInner(id) {   // Abgleich, danach Name melden und (Besitzer) Verpackungen für Admin/Funktionäre nachtragen
+  const ok = await spSyncCore(id);
+  if (ok) { const sp = spOf(id); if (sp) { await roomPing(sp); await roomWraps(sp); } }
+  return ok;
+}
+function spAuto(force) {
+  if (!SYNC_ON) return;
+  const run = () => { for (const id of spIds()) { const sp = spOf(id); if ((SP.st[id] && SP.st[id].state === 'bad') || (!force && sp.via && sp.last && Date.now() - Date.parse(sp.last) < 9e4)) continue; spSync(id); } };
+  if (viaMode() && (!SP.viaAt || Date.now() - SP.viaAt > 3e5)) { SP.viaAt = Date.now(); viaRefresh().then(run, run); } else run();
+  clubPing().catch(() => { });
+}
+function spDirty() { if (!SYNC_ON || !DB.spaces || !Object.keys(DB.spaces).length) return; clearTimeout(SP.t); SP.t = setTimeout(() => spAuto(true), 3000); }
 function spRender() {   // nach einem Abgleich mit neuen Daten die Ansicht auffrischen – aber nicht mitten in einer Eingabe und nicht im Hallenmodus
   const a = document.activeElement;
   if (route().path.endsWith('/run') || (a && a.closest && a.closest('#app') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
@@ -1833,25 +1851,25 @@ function spPaint() { document.querySelectorAll('[data-spst]').forEach(el => { if
 
 // Löschmarkierung (für abgeglichene Mannschaften): kind 't' Training, 'p' Spieler; undo = wieder entfernen
 function spDel(kind, tmId, ids, undo) {
-  const sp = SYNC_ON && tmId && spOf(tmId); if (!sp || sp.role === 'r') return;
+  const sp = SYNC_ON && tmId && spOf(tmId); if (!sp || spRo(sp)) return;
   sp.del = sp.del || { t: {}, p: {} }; const d = sp.del[kind] = sp.del[kind] || {};
   for (const id of [].concat(ids)) { if (undo) delete d[id]; else d[id] = Date.now(); }
 }
 
 // Mannschaft nur lesen? (Ansicht der Mannschaft, des Trainings oder der Saison)
 function roTeam() {
-  if (!SYNC_ON || !DB.spaces) return null;
+  if (!SYNC_ON) return null;
   const p = route().p; let tm = null;
   if (p[0] === 't' && !['run', 'view'].includes(p[2])) { const t = getT(p[1]); tm = t && teamOf(t); }
   else if (p[0] === 'team' && p[1] && p[1] !== 'new') tm = teamById(p[1]);
   else if (p[0] === 'season') tm = teamById(S.team);
-  const sp = tm && spOf(tm.id); return sp && sp.role === 'r' ? tm : null;
+  const sp = tm && spOf(tm.id); return tm && (spRo(sp) || curRole() === 'F') ? tm : null;
 }
 const RO_A = new Set(['newT', 'mv', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
-  const h = $('#app header.top'), html = '<div class="card rotop">🔒 Nur lesen – Änderungen macht der Haupttrainer</div>';
+  const h = $('#app header.top'), f = curRole() === 'F' || (spOf(tm.id) || {}).role === 'F', html = f ? '<div class="card rotop">🔒 Funktionär – nur ansehen</div>' : '<div class="card rotop">🔒 Nur lesen – Änderungen macht der Haupttrainer</div>';
   if (h) h.insertAdjacentHTML('afterend', html); else app.insertAdjacentHTML('afterbegin', html);
 }
 
@@ -1859,22 +1877,25 @@ function roApply() {
 function spCard(tm) {
   if (!SYNC_ON) return '';
   const sp = spOf(tm.id), id = esc(tm.id);
-  if (!sp) return `<div class="card spcard"><b>🔄 Mit Co-Trainern abgleichen</b><p class="small">Alle, die deinen Einladungslink haben, sehen dieselben Daten dieser Mannschaft – auch wenn jemand etwas ändert. Die Daten liegen verschlüsselt auf einem Server, der Server sieht keine Namen. Spielerliste, Anwesenheit und Reflexionen (auch Notizen zu Spielern) gehen mit.</p><button class="btn pri" data-a="spSetup" data-k="${id}">Mannschaftsraum einrichten</button></div>`;
-  const o = sp.role === 'o';
-  return `<div class="card spcard"><div class="row"><b>🔄 Abgleich mit Co-Trainern</b><span class="chip">${esc(SP_ROLE[sp.role] || '')}</span></div><div class="small" data-spst="${id}">${esc(spStatus(tm.id))}</div>
-    <div class="row wrap"><button class="btn" data-a="spNow" data-k="${id}">Jetzt abgleichen</button>${o ? `<button class="btn" data-a="spInvite" data-k="${id}" data-r="w">Co-Trainer einladen</button><button class="btn" data-a="spInvite" data-k="${id}" data-r="r">Nur-Lesen-Link</button>` : `<button class="btn" data-a="spLeave" data-k="${id}">Abgleich beenden</button>`}</div>
-    ${o ? `<div class="row wrap"><button class="btn" data-a="spRenew" data-k="${id}">Zugang erneuern</button><button class="btn danger" data-a="spDissolve" data-k="${id}">Raum auflösen</button></div>` : ''}</div>`;
+  if (!sp) return `<div class="card spcard"><b>🔄 Mit der Assistenz abgleichen</b><p class="small">Alle, die deinen Einladungslink haben, sehen dieselben Daten dieser Mannschaft – auch wenn jemand etwas ändert. Die Daten liegen verschlüsselt auf einem Server, der Server sieht keine Namen. Spielerliste, Anwesenheit und Reflexionen (auch Notizen zu Spielern) gehen mit.</p><button class="btn pri" data-a="spSetup" data-k="${id}">Mannschaftsraum einrichten</button></div>`;
+  const o = sp.role === 'o', full = o || sp.role === 'A';
+  return `<div class="card spcard"><div class="row"><b>🔄 ${sp.via ? 'Raum des Vereins' : 'Abgleich im Mannschaftsraum'}</b><span class="chip">${esc(SP_ROLE[sp.role] || '')}</span></div><div class="small" data-spst="${id}">${esc(spStatus(tm.id))}</div>
+    <div class="row wrap"><button class="btn" data-a="spNow" data-k="${id}">Jetzt abgleichen</button>${o ? `<button class="btn" data-a="spInvite" data-k="${id}" data-r="w">Assistenz einladen</button>` : sp.via ? '' : `<button class="btn" data-a="spLeave" data-k="${id}">Abgleich beenden</button>`}</div>
+    ${full ? `<div class="row wrap"><button class="btn" data-a="spRenew" data-k="${id}">Zugang erneuern</button><button class="btn danger" data-a="spDissolve" data-k="${id}">Raum auflösen</button></div>` : ''}</div>`;
 }
 const spLink = (sp, kind) => appUrl() + '#j=' + [sp.id, sp[kind], sp.k].join('.');
-function spInviteModal(id, kind, renewed) {
-  const tm = teamById(id), sp = spOf(id), url = spLink(sp, kind), w = kind === 'w';
+function spInviteModal(id, kind, renewed) {   // nur Assistenz-Links (der Nur-Lesen-Link ist aus der Oberfläche entfernt; Funktionäre kommen über den Verein)
+  const tm = teamById(id), sp = spOf(id), tok = sp && sp.w;
+  if (!tm || !sp || !tok) return spInfoModal('Assistenz einladen', 'Für diesen Raum gibt es noch keinen Einladungslink. Tippe auf «Zugang erneuern»: Dann entsteht ein neuer.');
+  const url = spLink(sp, 'w');
   S.share = { url, t: { title: tm.name }, data: null, file: '', text: 'Unihockey-Trainingsplaner, Mannschaftsraum: ' + tm.name };
-  modal(`<h2>${w ? 'Co-Trainer einladen' : 'Nur-Lesen-Link'}</h2>
-    <p class="small">${w ? `Wer diesen Link öffnet, sieht und ändert die Daten von «${esc(tm.name)}» – wie du.` : `Wer diesen Link öffnet, sieht die Daten von «${esc(tm.name)}», kann sie aber nicht ändern.`}</p>
-    <div class="warnbox"><b>Wichtig:</b> Der Link ist ein Schlüssel zur Mannschaft, mit Namen von Kindern. Schicke ihn nur einzeln an die Co-Trainer, nicht in Gruppenchats und nicht öffentlich.</div>
-    ${renewed ? '<div class="warnbox"><b>Zugang erneuert.</b> Alle bisherigen Links funktionieren nicht mehr. Schicke jetzt allen den neuen Link, auch den Nur-Lesen-Link.</div>' : ''}
+  modal(`<h2>Assistenz einladen</h2>
+    <p class="small">Wer diesen Link öffnet, sieht und ändert die Daten von «${esc(tm.name)}». Als Assistenz organisiert und führt man Trainings durch, kann den Raum aber nicht löschen, nicht einladen und den Zugang nicht erneuern.</p>
+    <div class="warnbox"><b>Wichtig:</b> Der Link ist ein Schlüssel zur Mannschaft, mit Namen von Kindern. Schicke ihn nur einzeln an die Assistenz, nicht in Gruppenchats und nicht öffentlich.</div>
+    ${renewed ? '<div class="warnbox"><b>Zugang erneuert.</b> Alle bisherigen Links funktionieren nicht mehr. Schicke jetzt allen, die dabei bleiben, den neuen Link.</div>' : ''}<div id="invChk"></div>
     <div class="qr">${qrSvg(url, 'Für einen QR-Code ist der Link zu lang – nutze «Link kopieren».')}</div>
-    <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="spInvite" data-k="${esc(id)}" data-r="${w ? 'r' : 'w'}">${w ? 'Nur-Lesen-Link' : 'Co-Trainer-Link'}</button><button class="btn" data-a="close">Schliessen</button></div>`);
+    <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="close">Schliessen</button></div>`);
+  if (!renewed) spRpc('space_get', { p_id: sp.id, p_t: tok }).catch(e => { if (e && e.status === 400 && e.message === 'kein zugriff') { const el = $('#invChk'); if (el) el.innerHTML = '<div class="warnbox"><b>Dieser Link gilt nicht mehr</b> (der Zugang wurde erneuert). Tippe auf «Zugang erneuern», dann entsteht ein neuer Link.</div>'; } });   // gilt der Link noch? (z. B. wenn der Admin den Zugang erneuert hat)
 }
 function spInfoModal(title, text) { modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="row"><button class="btn pri" data-a="close">Schliessen</button></div>`); }
 
@@ -1884,7 +1905,9 @@ function spSetup(id) {
   return spLock(async () => {
     const sp = { id: b64u(spRnd(16)), t: '', k: b64u(spRnd(32)), role: 'o', o: b64u(spRnd(24)), w: b64u(spRnd(24)), r: b64u(spRnd(24)), ver: 1, last: '', hash: '', del: { t: {}, p: {} } };
     sp.t = sp.o; const c = spContent(tm, sp);
-    await spRpc('space_create', { p_id: sp.id, p_o: sp.o, p_w: sp.w, p_r: sp.r, p_data: await spEnc(sp.k, c) });
+    const par = { p_id: sp.id, p_o: sp.o, p_w: sp.w, p_r: sp.r, p_data: await spEnc(sp.k, c) }, cl = await clubGet(0);
+    if (cl && cl.ready && cl.pub_admin) { par.p_wa = await wrapRoomKey(cl.pub_admin, sp.k); if (cl.pub_func) par.p_wf = await wrapRoomKey(cl.pub_func, sp.k); sp.wr = await spHash(cl.pub_admin + '|' + cl.pub_func); }   // Raumschlüssel für Admin (und Funktionäre) verpacken
+    await spRpc('space_create', par);
     sp.hash = await spHash(spCanon(c)); sp.last = new Date().toISOString(); if (!DB.spaces) DB.spaces = {}; DB.spaces[id] = sp; SP.st[id] = { state: 'ok' }; flush(); return true;
   });
 }
@@ -1896,7 +1919,7 @@ async function spJoinOpen(v) {
     const row = (await spRpc('space_get', { p_id: id, p_t: t }))[0]; if (!row) throw spErrObj('kein zugriff', { status: 400 });
     const rm = await spDec(k, row.data);
     if (!rm || rm.v !== 1 || !rm.team || !spSafe(rm.team.id) || !rm.team.name) throw spErrObj('Raum unlesbar', { bad: true });
-    const ex = spOf(rm.team.id), tm = teamById(rm.team.id), nT = (rm.trainings || []).length, nP = (rm.team.players || []).length;
+    let ex = spOf(rm.team.id); if (ex && ex.via) ex = null; const tm = teamById(rm.team.id), nT = (rm.trainings || []).length, nP = (rm.team.players || []).length;
     S.join = { id, t, k, role: row.role, rm };
     let note = '', can = true;
     if (ex && ex.id !== id) { note = 'Diese Mannschaft ist auf diesem Gerät schon mit einem anderen Raum verbunden. Beende dort zuerst den Abgleich.'; can = false; }
@@ -1905,11 +1928,12 @@ async function spJoinOpen(v) {
     modal(`<h2>Mannschaftsraum beitreten</h2><p><b>${esc(rm.team.name)}</b> <span class="muted small">${esc((stageById(rm.team.stage) || {}).name || '')}</span></p>
       <ul class="small"><li>Deine Rolle: <b>${esc(SP_ROLE[row.role] || '')}</b>${row.role === 'r' ? ' (Änderungen sind gesperrt)' : ''}</li><li>${nT} Training${nT === 1 ? '' : 's'}, ${nP} Person${nP === 1 ? '' : 'en'} in der Spielerliste</li></ul>
       ${note ? `<p class="small ${can ? '' : 'warn'}">${esc(note)}</p>` : ''}<p class="small muted">Die Daten werden auf diesem Gerät gespeichert und bei Änderungen automatisch abgeglichen.</p>
+      <label>Dein Name<input data-b="me:name" value="${esc(meGet().name)}" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off"></label><p class="small muted">Die anderen in der Mannschaft sehen, dass du dabei bist.</p>
       <div class="row wrap">${can ? '<button class="btn pri" data-a="spJoinOk">Beitreten</button>' : ''}<button class="btn" data-a="close">${can ? 'Abbrechen' : 'Schliessen'}</button></div>`);
   } catch (e) { const x = spErr(e); spInfoModal('Mannschaftsraum beitreten', x.state === 'off' ? 'Keine Verbindung zum Server. Öffne den Link nochmals, wenn du Internet hast.' : x.msg); }
 }
 async function spJoinDo() {
-  const j = S.join; S.join = null; closeModal(); if (!j) return;
+  const j = S.join; if (!j) return; if (!meName()) return toast('Bitte gib deinen Namen ein'); S.join = null; closeModal();
   const tid = j.rm.team.id, ex = spOf(tid); let created = null;
   await spLock(async () => {
     let tm = teamById(tid);
@@ -1923,13 +1947,15 @@ async function spJoinDo() {
   });
   if (teamById(tid) && spOf(tid)) { toast('Mannschaftsraum beigetreten'); go('/team/' + tid); } else toast('Beitritt fehlgeschlagen – bitte später nochmals versuchen');
 }
-function spRenewDo(id) {
+function spRenewDo(id) {   // Trainer: neuer Schlüssel und neue Verpackungen. Admin: Schlüssel bleibt (der Trainer behält seinen Zugang), nur die Links von Assistenz und Lesenden wechseln.
   return spLock(async () => {
-    const sp = spOf(id), tm = teamById(id); if (!sp || sp.role !== 'o') return false;
+    const sp = spOf(id), tm = teamById(id); if (!sp || !tm || (sp.role !== 'o' && sp.role !== 'A')) return false;
     if (!(await spSyncInner(id))) return false;
-    const nk = b64u(spRnd(32)), nw = b64u(spRnd(24)), nr = b64u(spRnd(24)), c = spContent(tm, sp);
-    const ver = await spRpc('space_rekey', { p_id: sp.id, p_o: sp.o, p_w: nw, p_r: nr, p_data: await spEnc(nk, c) });
-    Object.assign(sp, { k: nk, w: nw, r: nr, ver: +ver, hash: await spHash(spCanon(c)), last: new Date().toISOString() }); SP.st[id] = { state: 'ok' }; flush(); return true;
+    const own = sp.role === 'o', nk = own ? b64u(spRnd(32)) : sp.k, nw = b64u(spRnd(24)), nr = b64u(spRnd(24)), c = spContent(tm, sp);
+    const par = { p_id: sp.id, p_o: own ? sp.o : sp.t, p_w: nw, p_r: nr, p_data: own ? await spEnc(nk, c) : null }; let wr = '';
+    if (own) { const cl = await clubGet(0); if (cl && cl.ready && cl.pub_admin) { par.p_wa = await wrapRoomKey(cl.pub_admin, nk); if (cl.pub_func) par.p_wf = await wrapRoomKey(cl.pub_func, nk); wr = await spHash(cl.pub_admin + '|' + cl.pub_func); } }
+    const ver = await spRpc('space_rekey', par);
+    Object.assign(sp, { k: nk, w: nw, r: nr, ver: +ver, hash: await spHash(spCanon(c)), last: new Date().toISOString() }); if (own) sp.wr = wr; SP.st[id] = { state: 'ok' }; flush(); return true;
   });
 }
 const spU = id => { const tm = teamById(id); if (tm) tm.u = Date.now(); };   // Mannschaftseinstellung/Saison geändert (Zeitstempel fürs Zusammenführen)
@@ -1944,6 +1970,349 @@ function spImport(sp) {   // Datensicherung: Zugänge zu Mannschaftsräumen wied
   }
 }
 
+// ---------- Verein und Rollen: Admin, Funktionär, Trainer, Assistenz (tools/supabase-verein.sql) ----------
+// Kein Login: Identität = Schlüssel auf dem Gerät. DB.me = { dev (zufällige ID), name }. DB.club = { role: 'A'|'F', t (Token), priv (privater ECDH-Schlüssel als JWK), pub, saved, func: { t, pub, priv } (nur Admin) }.
+// Ende-zu-Ende: Der Raumschlüssel wird für den Admin (wa) und die Funktionäre (wf) mit ECDH P-256 + AES-GCM verpackt ('w1.'); die privaten Schlüssel verlassen die Geräte nie. Namen: in Räumen mit dem Raumschlüssel, vereinsweit für den Admin verpackt.
+// Rollen eines Geräts: A Admin, F Funktionär, T Trainer (eigene Mannschaft ohne Raum oder Raumrolle o), W Assistenz (w), R nur lesen (r). Aktive Rolle = DB.activeRole.
+// Admin und Funktionär sehen alle Räume als Mannschaften: lokale Kopien mit DB.spaces[teamId].via ('A'|'F'). Sie sind nur in dieser Rolle sichtbar; in einer persönlichen Rolle liegen sie in DB.via (versteckt, nicht gelöscht).
+const te = new TextEncoder(), td = new TextDecoder();
+const ROLE_NAME = { A: 'Admin', F: 'Funktionär', T: 'Trainer', W: 'Assistenz', R: 'Nur lesen' };
+const CL = { st: null, at: 0, bad: false, busy: false };   // club_get-Zwischenspeicher { ready, pub_admin, pub_func }, Zeitpunkt, Zugang ungültig?
+SP.mem = {};   // Personenlisten der Räume: { [teamId]: { list, at, err, busy } }
+const spRo = sp => !!sp && (sp.role === 'r' || sp.role === 'F');   // Raum nur lesen (r oder Funktionär)
+const agoTxt = v => { const ms = typeof v === 'number' ? v : Date.parse(v); if (!(ms > 0)) return ''; const m = Math.max(0, Math.round((Date.now() - ms) / 6e4)); return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : m < 1440 ? `vor ${Math.round(m / 60)} Std.` : `vor ${Math.round(m / 1440)} Tg.`; };
+
+// --- Identität ---
+function meGet() {
+  if (!DB.me || typeof DB.me !== 'object') DB.me = { dev: '', name: '' };
+  if (!/^[\w-]{8,64}$/.test(DB.me.dev || '')) DB.me.dev = b64u(spRnd(16));
+  if (typeof DB.me.name !== 'string') DB.me.name = '';
+  return DB.me;
+}
+const meName = () => String((DB.me && DB.me.name) || '').replace(/\s+/g, ' ').trim();
+function askName(cb, why) {   // «Wie heisst du?»; danach läuft cb
+  S.nameCb = cb;
+  modal(`<h2>Wie heisst du?</h2><p class="small">${why || 'Dein Name erscheint bei den anderen Personen deiner Mannschaft, damit man sieht, wer dabei ist. Er liegt verschlüsselt auf dem Server; nur die Mannschaft kann ihn lesen. Es gibt kein Konto und kein Passwort.'}</p><label>Dein Name<input id="nameIn" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off" value="${esc(meGet().name)}"></label><div class="row"><button class="btn pri" data-a="nameOk">Weiter</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  setTimeout(() => { const e = $('#nameIn'); if (e) e.focus(); }, 50);
+}
+
+// --- Verpacken (ECIES): ephemeres ECDH-Paar → AES-GCM-Schlüssel → verschlüsseln. 'w1.' + base64url(JSON { e, iv, c }) ---
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+const jwkClean = j => { const o = { kty: j.kty, crv: j.crv, x: j.x, y: j.y }; if (j.d) o.d = j.d; return o; };
+async function newPair() {
+  const kp = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);
+  const pub = jwkClean(await crypto.subtle.exportKey('jwk', kp.publicKey)); delete pub.d;
+  return { priv: jwkClean(await crypto.subtle.exportKey('jwk', kp.privateKey)), pub: JSON.stringify(pub) };
+}
+async function wrapFor(pubText, raw) {   // raw: Uint8Array (z. B. 32-Byte-Raumschlüssel)
+  const pub = await crypto.subtle.importKey('jwk', jwkClean(JSON.parse(pubText)), ECDH, false, []), eph = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);
+  const aes = await crypto.subtle.deriveKey({ name: 'ECDH', public: pub }, eph.privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const iv = spRnd(12), c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, raw)), e = jwkClean(await crypto.subtle.exportKey('jwk', eph.publicKey)); delete e.d;
+  return 'w1.' + b64u(te.encode(JSON.stringify({ e, iv: b64u(iv), c: b64u(c) })));
+}
+async function unwrapWith(priv, text) {
+  try {
+    if (typeof text !== 'string' || !text.startsWith('w1.')) throw 0;
+    const o = JSON.parse(td.decode(unb64u(text.slice(3)))), pk = await crypto.subtle.importKey('jwk', jwkClean(priv), ECDH, false, ['deriveKey']), ep = await crypto.subtle.importKey('jwk', jwkClean(o.e), ECDH, false, []);
+    const aes = await crypto.subtle.deriveKey({ name: 'ECDH', public: ep }, pk, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64u(o.iv) }, aes, unb64u(o.c)));
+  } catch (e) { throw spErrObj('Entpacken fehlgeschlagen', { bad: true }); }
+}
+const wrapRoomKey = (pubText, k) => wrapFor(pubText, unb64u(String(k)));   // Raumschlüssel (base64url) für einen öffentlichen Schlüssel verpacken
+const wrapKeys = new Map();   // Verpackung → Raumschlüssel (Zwischenspeicher)
+async function roomKeyOf(row) {   // Raumschlüssel aus der Verpackung des eigenen Vereinszugangs (Admin: wa, Funktionär: wf); '' wenn noch nicht verpackt
+  if (!row || !row.wrap || !DB.club) return '';
+  if (!wrapKeys.has(row.wrap)) { const raw = await unwrapWith(DB.club.priv, row.wrap); if (raw.length !== 32) throw spErrObj('Schlüssel ungültig', { bad: true }); wrapKeys.set(row.wrap, b64u(raw)); }
+  return wrapKeys.get(row.wrap);
+}
+
+// --- Vereinszustand (club_get) ---
+async function clubGet(maxAge) {
+  if (!SYNC_ON) return null;
+  if (CL.st && Date.now() - CL.at < (maxAge == null ? 3e5 : maxAge)) return CL.st;
+  try { const r = (await spRpc('club_get', {}))[0]; if (r) { CL.st = { ready: !!r.ready, pub_admin: r.pub_admin || '', pub_func: r.pub_func || '' }; CL.at = Date.now(); } } catch (e) { /* alter Stand bleibt */ }
+  return CL.st;
+}
+const clubErr = e => { if (e && e.status === 400 && e.message === 'kein zugriff') CL.bad = true; };
+
+// --- Rollen ---
+const personalTeams = () => DB.teams.filter(tm => !(spOf(tm.id) || {}).via);
+function myRoles() {
+  const out = [], c = DB.club;
+  if (c && c.role === 'A') out.push({ k: 'A', teams: [] });
+  if (c && c.role === 'F') out.push({ k: 'F', teams: [] });
+  const g = { T: [], W: [], R: [] };
+  for (const tm of personalTeams()) { const sp = spOf(tm.id), r = sp ? sp.role : 'o'; (r === 'w' ? g.W : r === 'r' ? g.R : g.T).push(tm); }
+  for (const k of ['T', 'W', 'R']) if (g[k].length) out.push({ k, teams: g[k] });
+  return out;
+}
+function curRole() {
+  const ks = myRoles().map(r => r.k);
+  if (DB.activeRole && ks.includes(DB.activeRole)) return DB.activeRole;
+  return ['T', 'W', 'R', 'A', 'F'].find(k => ks.includes(k)) || '';
+}
+const viaMode = () => { const r = curRole(); return DB.club && DB.club.role === r ? r : ''; };   // 'A' oder 'F', wenn die Räume des Vereins gerade sichtbar sind
+const roleLine = () => { const n = meName(), r = curRole(); return { n, r: r ? ROLE_NAME[r] : '' }; };
+function roleBtn() {
+  if (!SYNC_ON) return '';
+  const { n, r } = roleLine();
+  return `<button class="rolebtn" data-a="roleOpen" aria-label="Name und Rolle: ${esc([n, r].filter(Boolean).join(', ') || 'noch nicht angegeben')}">${n || r ? `${n ? `<span class="rn">${esc(n)}</span>` : ''}${r ? `<span class="rr${n ? ' sep' : ''}">${esc(r)}</span>` : ''}` : '<span class="rr">Name angeben</span>'}</button>`;
+}
+const roleDesc = r => ({ A: 'Alle Mannschaften des Vereins ansehen und bearbeiten, Personen und Räume verwalten', F: 'Alle Mannschaften des Vereins ansehen, nichts ändern', T: 'Deine Mannschaften: ' + r.teams.map(t => t.name).join(', '), W: 'Assistenz in: ' + r.teams.map(t => t.name).join(', '), R: 'Nur lesen in: ' + r.teams.map(t => t.name).join(', ') })[r.k];
+function roleModal() {
+  const me = meGet(), rs = myRoles(), cur = curRole();
+  modal(`<h2>Name und Rolle</h2>
+    <label>Dein Name<input data-b="me:name" value="${esc(me.name)}" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off"></label>
+    <p class="small muted">Der Name erscheint bei den anderen Personen deiner Mannschaften (verschlüsselt, nur für sie lesbar).</p>
+    ${rs.length ? `<h3>Deine Rollen auf diesem Gerät</h3><div class="col">${rs.map(r => `<button class="btn rolepick${r.k === cur ? ' sel' : ''}" data-a="roleSet" data-k="${r.k}"><b>${ROLE_NAME[r.k]}${r.k === cur ? ' ✓' : ''}</b><span class="small">${esc(roleDesc(r))}</span></button>`).join('')}</div>${rs.length > 1 ? '<p class="small muted">Tippe auf eine Rolle, um zu wechseln.</p>' : ''}`
+      : '<p class="small">Du hast noch keine Rolle: Lege eine Mannschaft an (Trainer), tritt mit einem Einladungslink bei (Assistenz) oder öffne den Link des Admins (Funktionär).</p>'}
+    ${CL.bad && DB.club ? `<div class="warnbox">${DB.club.role === 'F' ? 'Dein Funktionärs-Zugang gilt nicht mehr. Bitte den Admin um einen neuen Link.' : 'Dein Admin-Schlüssel wird vom Server nicht akzeptiert.'}</div>` : ''}
+    <div class="row"><button class="btn pri" data-a="roleDone">Fertig</button></div>`);
+}
+
+// --- Vereinsweit sichtbare Kopien (via) ---
+const viaBox = () => { const v = DB.via = DB.via && typeof DB.via === 'object' ? DB.via : {}; v.teams = Array.isArray(v.teams) ? v.teams : []; v.trainings = Array.isArray(v.trainings) ? v.trainings : []; v.seasons = v.seasons && typeof v.seasons === 'object' ? v.seasons : {}; v.spaces = v.spaces && typeof v.spaces === 'object' ? v.spaces : {}; return v; };
+function viaStash() {   // alle sichtbaren Vereinskopien verstecken (nicht löschen)
+  const v = viaBox();
+  for (const id of Object.keys(DB.spaces || {}).filter(i => DB.spaces[i].via)) {
+    const tm = teamById(id);
+    if (tm) { const ts = teamTrainings(tm); v.teams = v.teams.filter(x => x.id !== id); v.teams.push(tm); DB.teams = DB.teams.filter(x => x !== tm); v.trainings = v.trainings.filter(t => t.teamId !== id).concat(ts); DB.trainings = DB.trainings.filter(t => !ts.includes(t)); if (DB.seasons[id]) v.seasons[id] = DB.seasons[id]; delete DB.seasons[id]; }
+    v.spaces[id] = DB.spaces[id]; delete DB.spaces[id];
+  }
+}
+function viaUnstash() {   // Kopien des eigenen Vereinszugangs wieder sichtbar machen; Rest (anderer Zugang, Kollision mit einer eigenen Mannschaft) verwerfen
+  const v = viaBox(), mode = DB.club && DB.club.role;
+  for (const id of Object.keys(v.spaces)) {
+    const sp = v.spaces[id], tm = v.teams.find(x => x.id === id);
+    if (!mode || sp.via !== mode || !tm || teamById(id) || (DB.spaces && DB.spaces[id])) continue;
+    DB.teams.push(tm); DB.trainings.push(...v.trainings.filter(t => t.teamId === id)); if (v.seasons[id]) DB.seasons[id] = v.seasons[id]; if (!DB.spaces) DB.spaces = {}; DB.spaces[id] = sp;
+  }
+  v.teams = []; v.trainings = []; v.seasons = {}; v.spaces = {};
+}
+function applyRole() { viaStash(); if (viaMode()) viaUnstash(); }
+function viaDrop(tid) {   // Vereinskopie einer Mannschaft ganz entfernen (Raum gibt es nicht mehr oder Zugang gewechselt)
+  const v = viaBox(), tm = teamById(tid);
+  if (tm && (spOf(tid) || {}).via) { const ids = new Set(teamTrainings(tm).map(t => t.id)); DB.trainings = DB.trainings.filter(t => !ids.has(t.id)); DB.teams = DB.teams.filter(x => x !== tm); }
+  if (DB.spaces && (DB.spaces[tid] || {}).via) { delete DB.spaces[tid]; delete DB.seasons[tid]; }
+  v.teams = v.teams.filter(x => x.id !== tid); v.trainings = v.trainings.filter(t => t.teamId !== tid); delete v.seasons[tid]; delete v.spaces[tid]; delete SP.st[tid]; delete SP.mem[tid];
+  if (S.team === tid) S.team = '';
+}
+function viaDropAll() { for (const id of Object.keys(DB.spaces || {}).filter(i => DB.spaces[i].via)) viaDrop(id); const v = viaBox(); v.teams = []; v.trainings = []; v.seasons = {}; v.spaces = {}; }
+
+// Räume des Vereins laden (Admin: space_list mit wa, Funktionär: mit wf), als Mannschaften anlegen, verschwundene entfernen
+function viaRefresh() {
+  return spLock(async () => {
+    const c = DB.club, m = viaMode(); if (!SYNC_ON || !c || !m || navigator.onLine === false) return false;
+    let list; try { list = await spRpc('space_list', { p_t: c.t }); CL.bad = false; } catch (e) { clubErr(e); if (CL.bad) spRender(); return false; }
+    const seen = new Set(); let changed = false;
+    for (const row of list) {
+      seen.add(row.id);
+      const ex = Object.entries(DB.spaces || {}).find(([, s]) => s.id === row.id);
+      if (ex && !ex[1].via) continue;   // eigene Mannschaft (Trainer/Assistenz): wird dort abgeglichen
+      let k = ''; try { k = await roomKeyOf(row); } catch (e) { k = ''; }
+      if (!k) continue;   // noch nicht für uns verpackt: der Trainer trägt das beim nächsten Abgleich nach
+      if (ex) { const sp = ex[1]; if (sp.k !== k) { sp.k = k; sp.ver = 0; sp.hash = ''; } sp.t = c.t; sp.role = m; if (SP.st[ex[0]] && SP.st[ex[0]].state === 'bad') delete SP.st[ex[0]]; continue; }
+      try {
+        const g = (await spRpc('space_get', { p_id: row.id, p_t: c.t }))[0], rm = await spDec(k, g.data), tid = rm && rm.team && rm.team.id;
+        if (!rm || rm.v !== 1 || !spSafe(tid) || teamById(tid)) continue;
+        DB.teams.push({ id: tid, name: String(rm.team.name || '').slice(0, 80), stage: rm.team.stage || DB.stage, color: rm.team.color || TEAM_COLORS[0], ort: '', sessions: [], u: -1 });
+        if (!DB.spaces) DB.spaces = {}; DB.spaces[tid] = { id: row.id, t: c.t, k, role: m, via: m, ver: 0, last: '', hash: '', del: { t: {}, p: {} } }; changed = true;
+      } catch (e) { /* dieser Raum später */ }
+    }
+    for (const [tid, sp] of Object.entries(DB.spaces || {})) if (sp.via && !seen.has(sp.id)) { viaDrop(tid); changed = true; }
+    flush(); if (changed) spRender();
+    return true;
+  });
+}
+
+// --- Meldung mit Namen (Personenliste) ---
+async function roomPing(sp, force) {   // Name mit dem Raumschlüssel verschlüsselt; höchstens alle paar Minuten
+  const nm = meName(); if (!nm || !sp || !sp.k) return;
+  const me = meGet(), sig = await spHash(nm + '|' + sp.role);
+  if (!force && sp.pg === sig && Date.now() - (sp.pgAt || 0) < 3e5) return;
+  try { await spRpc('member_ping', { p_id: sp.id, p_t: sp.t, p_dev: me.dev, p_name_enc: await spEnc(sp.k, { n: nm }) }); sp.pg = sig; sp.pgAt = Date.now(); } catch (e) { /* nächstes Mal */ }
+}
+async function clubPing(force) {   // Admin und Funktionär: vereinsweit, Name für den Admin verpackt
+  const c = DB.club, nm = meName(); if (!SYNC_ON || !c || !nm || navigator.onLine === false) return;
+  const cs = await clubGet(); if (!cs || !cs.pub_admin) return;
+  const me = meGet(), sig = await spHash(nm + '|' + cs.pub_admin);
+  if (!force && c.pg === sig && Date.now() - (c.pgAt || 0) < 3e5) return;
+  try { await spRpc('club_ping', { p_t: c.t, p_dev: me.dev, p_name_enc: await wrapFor(cs.pub_admin, te.encode(JSON.stringify({ n: nm }))) }); c.pg = sig; c.pgAt = Date.now(); CL.bad = false; } catch (e) { clubErr(e); }
+}
+async function roomWraps(sp) {   // Besitzer trägt die Verpackungen für Admin/Funktionäre nach (Raum vor der Einrichtung angelegt, oder neuer Funktionärs-Schlüssel)
+  if (!sp || sp.role !== 'o' || sp.via || !sp.o) return;
+  const c = await clubGet(); if (!c || !c.ready || !c.pub_admin) return;
+  const sig = await spHash(c.pub_admin + '|' + c.pub_func); if (sp.wr === sig) return;
+  try { await spRpc('space_setwrap', { p_id: sp.id, p_t: sp.o, p_wa: await wrapRoomKey(c.pub_admin, sp.k), p_wf: c.pub_func ? await wrapRoomKey(c.pub_func, sp.k) : null }); sp.wr = sig; flush(); } catch (e) { /* nächstes Mal */ }
+}
+async function memList(sp) {   // Personen eines Raums: Namen mit dem Raumschlüssel entschlüsseln
+  const rows = await spRpc('member_list', { p_id: sp.id, p_t: sp.t }), me = meGet().dev;
+  return Promise.all(rows.map(async r => { let name = ''; try { name = String((await spDec(sp.k, r.name_enc)).n || ''); } catch (e) { /* ohne Namen */ } return { dev: r.dev, name, role: r.role, last: r.last_seen, me: r.dev === me }; }));
+}
+async function memLoad(tid, force) {
+  const sp = spOf(tid); if (!SYNC_ON || !sp || !sp.k) return;
+  const m = SP.mem[tid] = SP.mem[tid] || {};
+  if (m.busy || (!force && m.at && Date.now() - m.at < 6e4)) return;
+  m.busy = true;
+  try { m.list = await memList(sp); m.err = ''; } catch (e) { m.err = spErr(e).state === 'off' ? 'Offline – die Liste kommt, sobald Internet da ist.' : 'Die Liste ist gerade nicht verfügbar.'; }
+  m.busy = false; m.at = Date.now(); memPaint(tid);
+}
+const roleChip = r => `<span class="chip">${esc(SP_ROLE[r] || r)}</span>`;
+const personRow = (p, rm, k, room) => `<div class="person"><div class="row"><b>${esc(p.name || 'Ohne Namen')}${p.me ? ' <span class="muted small">(du)</span>' : ''}</b>${roleChip(p.role)}</div><div class="row"><span class="small muted grow">${p.last ? 'zuletzt aktiv ' + esc(agoTxt(p.last)) : ''}</span>${rm && !p.me && k ? `<button class="btn sm" data-a="memRm" data-k="${esc(k)}" data-room="${esc(room || '')}" data-dev="${esc(p.dev)}">Entfernen</button>` : ''}</div></div>`;
+function memHtml(tid) {
+  const m = SP.mem[tid], sp = spOf(tid), rm = !!sp && (sp.role === 'o' || sp.role === 'A');
+  if (!m || (!m.list && !m.err)) return '<p class="small muted nomargin">Lädt …</p>';
+  if (!m.list) return `<p class="small muted nomargin">${esc(m.err)}</p>`;
+  return (m.list.map(p => personRow(p, rm, tid)).join('') || '<p class="small muted nomargin">Noch niemand gemeldet. Jedes Gerät meldet sich beim Abgleich mit seinem Namen.</p>') + (rm ? '<p class="small muted">«Entfernen» nimmt eine Person aus der Liste. Den Zugang sperrt erst «Zugang erneuern».</p>' : '');
+}
+function memPaint(tid) { document.querySelectorAll('[data-spmem]').forEach(el => { if (el.dataset.spmem === tid) el.innerHTML = memHtml(tid); }); }
+function memCard(tm) { const sp = SYNC_ON && spOf(tm.id); return sp ? `<div class="card"><h2 class="nomargin">Personen im Raum</h2><div data-spmem="${esc(tm.id)}">${memHtml(tm.id)}</div></div>` : ''; }
+
+// --- Admin einrichten, sichern, wiederherstellen ---
+const backupObj = () => { const c = DB.club; return { v: 1, kind: 'unihockey-admin', created: new Date().toISOString(), name: meName(), role: 'A', t: c.t, priv: c.priv, pub: c.pub, ...(c.func ? { func: c.func } : {}) }; };
+function backupModal() {
+  S.bkDl = false;
+  modal(`<h2>Admin-Schlüssel sichern</h2><p class="small">Dein Admin-Schlüssel liegt nur auf diesem Gerät. Er öffnet alle Mannschaftsräume des Vereins. Geht das Gerät verloren oder löschst du die App-Daten, kann niemand ihn wiederherstellen – dann sind alle Räume für dich verloren.</p>
+    <div class="warnbox"><b>Lade die Datei herunter und bewahre sie sicher auf</b> (z. B. Passwort-Manager oder verschlüsselter USB-Stick), nicht in einem Chat und nicht per E-Mail. Wer die Datei hat, ist Admin.</div>
+    <div class="col"><button class="btn pri" data-a="admBackupDl">Schlüssel-Datei herunterladen</button><button class="btn" data-a="admBackupOk" disabled>Ich habe die Datei sicher abgelegt</button></div>
+    <p class="small muted">Bis du bestätigst, erinnert dich die App oben an die Sicherung.</p>`);
+}
+async function clubSetupDo(code) {
+  const kp = await newPair(), tok = b64u(spRnd(24));
+  await spRpc('club_setup', { p_code: code, p_admin: tok, p_pub_admin: kp.pub });
+  viaDropAll(); DB.club = { role: 'A', t: tok, priv: kp.priv, pub: kp.pub, saved: false }; DB.activeRole = 'A'; CL.at = 0; CL.bad = false; applyRole(); flush();
+}
+async function clubRestore(d) {
+  if (!d || d.kind !== 'unihockey-admin' || typeof d.t !== 'string' || !d.priv || !d.priv.d || !d.priv.x || !d.priv.y || typeof d.pub !== 'string') throw spErrObj('Das ist keine Admin-Schlüssel-Datei.', { local: true });
+  try { await spRpc('club_members_list', { p_admin: d.t }); } catch (e) { if (e.status === 400) throw spErrObj('Dieser Schlüssel gilt nicht mehr (der Admin-Zugang wurde gewechselt).', { local: true }); throw e; }
+  viaDropAll(); DB.club = { role: 'A', t: d.t, priv: jwkClean(d.priv), pub: d.pub, saved: true, savedAt: Date.now(), ...(d.func && d.func.t && d.func.priv ? { func: { t: d.func.t, pub: d.func.pub, priv: jwkClean(d.func.priv) } } : {}) };
+  if (!meName() && d.name) meGet().name = String(d.name).slice(0, 40);
+  DB.activeRole = 'A'; CL.bad = false; CL.at = 0; wrapKeys.clear(); applyRole(); flush();
+}
+
+// --- Funktionärs-Zugang ---
+const funcLink = f => appUrl() + '#f=' + f.t + '.' + b64u(te.encode(JSON.stringify(jwkClean(f.priv))));
+async function rewrapAll(pubFunc) {   // wf in allen Räumen neu setzen (Raumschlüssel mit dem Funktionärs-Schlüssel verpacken)
+  const c = DB.club, list = await spRpc('space_list', { p_t: c.t }); let done = 0, pending = 0;
+  for (const row of list) {
+    let k = ''; try { k = await roomKeyOf(row); } catch (e) { k = ''; }
+    if (!k) { pending++; continue; }
+    await spRpc('space_setwrap', { p_id: row.id, p_t: c.t, p_wa: null, p_wf: await wrapRoomKey(pubFunc, k) }); done++;
+  }
+  return { done, pending };
+}
+async function funcMake() {   // neues Funktionärs-Paar: alte Links werden ungültig
+  const c = DB.club, kp = await newPair(), tok = b64u(spRnd(24));
+  await spRpc('club_func_set', { p_admin: c.t, p_func: tok, p_pub_func: kp.pub });
+  c.func = { t: tok, pub: kp.pub, priv: kp.priv }; flush(); CL.at = 0;
+  const r = await rewrapAll(kp.pub); await clubGet(0); return r;
+}
+function funcModal(extra) {
+  const f = DB.club && DB.club.func; if (!f) return;
+  const url = funcLink(f);
+  S.share = { url, t: { title: 'Funktionär' }, data: null, file: '', text: 'Unihockey-Trainingsplaner: Zugang als Funktionär' };
+  modal(`<h2>Funktionärs-Link</h2><p class="small">Wer diesen Link öffnet, sieht alle Mannschaften des Vereins (mit Namen von Kindern), kann aber nichts ändern.</p>
+    <div class="warnbox"><b>Wichtig:</b> Der Link ist ein Schlüssel. Schicke ihn nur einzeln an Personen im Vorstand, nicht in Gruppenchats und nicht öffentlich.</div>${extra || ''}
+    <div class="qr">${qrSvg(url, 'Für einen QR-Code ist der Link zu lang – nutze «Link kopieren».')}</div>
+    <div class="row wrap"><button class="btn pri" data-a="shNative">Teilen …</button><button class="btn" data-a="shCopy">Link kopieren</button><button class="btn" data-a="close">Schliessen</button></div>`);
+}
+async function funcJoinOpen(v) {
+  if (!SYNC_ON) return spInfoModal('Als Funktionär beitreten', 'Abgleich ist in dieser App noch nicht eingerichtet.');
+  const [t, p] = String(v).split('.');
+  let priv = null; try { priv = jwkClean(JSON.parse(td.decode(unb64u(p || '')))); } catch (e) { /* ungültig */ }
+  if (!t || !/^[\w-]+$/.test(t) || !priv || !priv.d || !priv.x || !priv.y) return spInfoModal('Als Funktionär beitreten', 'Dieser Link ist ungültig. Bitte den Admin um einen neuen Link.');
+  if (DB.club && DB.club.role === 'A') return spInfoModal('Als Funktionär beitreten', 'Dieses Gerät ist als Admin eingerichtet. Öffne den Funktionärs-Link auf einem anderen Gerät.');
+  try {
+    await spRpc('space_list', { p_t: t });
+    S.fjoin = { t, priv };
+    modal(`<h2>Als Funktionär beitreten</h2><ul class="small"><li>Du siehst danach <b>alle Mannschaften des Vereins</b> – mit Trainings, Anwesenheit und Namen.</li><li>Du kannst <b>nichts ändern</b>.</li></ul>${DB.club ? '<p class="small warn">Dieses Gerät hatte schon einen Funktionärs-Zugang. Er wird ersetzt.</p>' : ''}
+      <label>Dein Name<input data-b="me:name" value="${esc(meGet().name)}" maxlength="40" placeholder="z. B. Sämi L." autocomplete="off"></label><p class="small muted">Der Admin sieht den Namen in der Personenliste.</p>
+      <div class="row wrap"><button class="btn pri" data-a="funcJoinOk">Beitreten</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  } catch (e) { const x = spErr(e); spInfoModal('Als Funktionär beitreten', x.state === 'off' ? 'Keine Verbindung zum Server. Öffne den Link nochmals, wenn du Internet hast.' : 'Dieser Link ist ungültig oder wurde erneuert. Bitte den Admin um einen neuen Link.'); }
+}
+async function funcJoinDo() {
+  const j = S.fjoin; if (!j) return;
+  if (!meName()) return toast('Bitte gib deinen Namen ein');
+  S.fjoin = null; closeModal();
+  viaDropAll(); DB.club = { role: 'F', t: j.t, priv: j.priv }; DB.activeRole = 'F'; CL.at = 0; CL.bad = false; wrapKeys.clear(); applyRole(); flush(); goR('/'); toast('Du bist jetzt Funktionär');
+  SP.viaAt = 0; clubPing(true); viaRefresh().then(() => spAuto());
+}
+
+// --- Admin-Seite «Personen und Räume» ---
+async function admLoad(force) {
+  const c = DB.club; if (!SYNC_ON || !c || c.role !== 'A') return;
+  const a = S.adm = S.adm || {};
+  if (a.busy || (!force && a.at && Date.now() - a.at < 3e4)) return;
+  a.busy = true;
+  try {
+    const [rooms, cm] = await Promise.all([spRpc('space_list', { p_t: c.t }), spRpc('club_members_list', { p_admin: c.t })]), me = meGet().dev;
+    a.club = await Promise.all(cm.map(async r => { let name = ''; try { name = String(JSON.parse(td.decode(await unwrapWith(c.priv, r.name_enc))).n || ''); } catch (e) { /* ohne Namen */ } return { dev: r.dev, name, role: r.role, last: r.last_seen, me: r.dev === me }; }));
+    a.rooms = await Promise.all(rooms.map(async row => {
+      const o = { id: row.id, upd: row.updated, keyed: false, name: '', n: 0, tid: '', persons: [] };
+      try {
+        const k = await roomKeyOf(row);
+        if (k) { o.keyed = true; const g = (await spRpc('space_get', { p_id: row.id, p_t: c.t }))[0], rm = await spDec(k, g.data); o.name = String((rm.team || {}).name || ''); o.n = (rm.trainings || []).length; o.tid = String((rm.team || {}).id || ''); o.persons = await memList({ id: row.id, t: c.t, k }); }
+      } catch (e) { /* Raum nicht lesbar */ }
+      return o;
+    }));
+    a.err = ''; CL.bad = false;
+  } catch (e) { clubErr(e); a.err = spErr(e).state === 'off' ? 'Offline – die Übersicht kommt, sobald Internet da ist.' : (CL.bad ? 'Der Server akzeptiert deinen Admin-Schlüssel nicht.' : 'Die Übersicht ist gerade nicht verfügbar.'); }
+  a.busy = false; a.at = Date.now(); if (route().p[0] === 'admin') render();
+}
+function viewAdmin() {
+  const c = DB.club, hd = head('Verein', '/more', '', 'Personen und Räume');
+  if (!c || c.role !== 'A') return hd + '<div class="card"><p>Diese Seite ist nur für den Admin des Vereins.</p></div>';
+  if (curRole() !== 'A') return hd + '<div class="card"><p>Du bist gerade nicht als Admin unterwegs.</p><button class="btn pri" data-a="roleSet" data-k="A">Als Admin weiterarbeiten</button></div>';
+  const a = S.adm || {}, cs = CL.st || {}, wait = a.busy && !a.rooms;
+  const func = cs.pub_func ? (c.func ? '<p class="small">Funktionäre sehen alle Mannschaften, ändern aber nichts. Du schickst ihnen einen Link.</p><div class="row wrap"><button class="btn pri" data-a="funcShow">Link und QR anzeigen</button><button class="btn" data-a="funcRenew">Zugang erneuern</button></div>' : '<p class="small">Es gibt einen Funktionärs-Zugang, aber den Link kann dieses Gerät nicht mehr anzeigen. Mit «Zugang erneuern» entsteht ein neuer Link.</p><button class="btn" data-a="funcRenew">Zugang erneuern</button>')
+    : '<p class="small">Funktionäre (Vorstand) sehen alle Mannschaften, ändern aber nichts. Erzeuge einen Link und schick ihn einzeln an die Personen.</p><button class="btn pri" data-a="funcNew">Funktionärs-Link erzeugen</button>';
+  const rooms = (a.rooms || []).map(r => {
+    const tm = r.tid && spOf(r.tid) && (spOf(r.tid).via || spOf(r.tid).role === 'o') ? 1 : 0;
+    return `<div class="card"><div class="row"><b>${esc(r.name || (r.keyed ? 'Raum ' + r.id.slice(0, 6) : 'Raum ' + r.id.slice(0, 6) + ' (noch nicht freigegeben)'))}</b><span class="muted small">${r.keyed ? r.n + ' Training' + (r.n === 1 ? '' : 's') : ''}</span></div>
+      <div class="small muted">zuletzt geändert ${esc(agoTxt(r.upd))}</div>
+      ${r.keyed ? (r.persons.length ? r.persons.map(p => personRow(p, true, r.tid, r.id)).join('') : '<p class="small muted">Noch niemand hat sich mit Namen gemeldet.</p>') : '<p class="small muted">Der Trainer dieser Mannschaft muss die App einmal öffnen, damit der Raum für den Admin freigegeben wird.</p>'}
+      <div class="row wrap">${tm ? `<button class="btn sm" data-a="admRenew" data-k="${esc(r.tid)}">Zugang erneuern</button>` : ''}<button class="btn sm danger" data-a="admDelRoom" data-r="${esc(r.id)}" data-n="${esc(r.name)}">Raum löschen</button></div></div>`;
+  }).join('') || (wait ? '' : '<p class="muted small">Noch keine Räume.</p>');
+  const cm = (a.club || []).map(p => `<div class="person"><div class="row"><b>${esc(p.name || 'Ohne Namen')}${p.me ? ' <span class="muted small">(du)</span>' : ''}</b>${roleChip(p.role)}</div><div class="row"><span class="small muted grow">${p.last ? 'zuletzt aktiv ' + esc(agoTxt(p.last)) : ''}</span>${p.me ? '' : `<button class="btn sm" data-a="admCmRm" data-dev="${esc(p.dev)}" data-n="${esc(p.name)}">Entfernen</button>`}</div></div>`).join('');
+  return hd + `${a.err ? `<div class="card warnbox">${esc(a.err)}</div>` : ''}
+    <div class="card"><h2 class="nomargin">Verein</h2><p class="small">Eingerichtet. Admin-Schlüssel: <b>${c.saved ? 'gesichert' : 'noch nicht gesichert'}</b>${c.saved && c.savedAt ? ' (' + esc(agoTxt(c.savedAt)) + ')' : ''}.</p><button class="btn${c.saved ? '' : ' pri'}" data-a="admBackup">${c.saved ? 'Sicherung nochmals herunterladen' : 'Jetzt sichern'}</button></div>
+    <div class="card"><h2 class="nomargin">Funktionärs-Zugang</h2>${func}</div>
+    <div class="card"><h2 class="nomargin">Funktionäre und Admin</h2>${cm || (wait ? '<p class="small muted">Lädt …</p>' : '<p class="small muted">Noch niemand gemeldet.</p>')}<p class="small muted">«Entfernen» nimmt eine Person nur aus der Liste. Den Zugang sperrt erst «Funktionärs-Zugang erneuern».</p></div>
+    <h2>Mannschaftsräume</h2>${wait ? '<p class="small muted">Lädt …</p>' : ''}${rooms}
+    <div class="row"><button class="btn sm" data-a="admReload">Aktualisieren</button></div>`;
+}
+function clubBanner() {
+  const c = DB.club; let html = '';
+  if (!c) return;
+  if (c.role === 'A' && !c.saved) html = '<div class="card warnbox clubwarn"><b>⚠ Admin-Schlüssel noch nicht gesichert.</b> Ohne Sicherung verlierst du den Zugang zu allen Räumen, wenn dieses Gerät ausfällt. <button class="btn sm" data-a="admBackup">Jetzt sichern</button></div>';
+  else if (CL.bad) html = `<div class="card warnbox clubwarn">${c.role === 'F' ? 'Dein Funktionärs-Zugang gilt nicht mehr. Bitte den Admin um einen neuen Link.' : 'Der Server akzeptiert deinen Admin-Schlüssel nicht.'}</div>`;
+  if (!html) return;
+  const h = $('#app header.top'); if (h) h.insertAdjacentHTML('afterend', html); else $('#app').insertAdjacentHTML('afterbegin', html);
+}
+function clubMoreCard() {
+  if (!SYNC_ON) return '';
+  const c = DB.club, cs = CL.st;
+  if (c && c.role === 'A') return `<div class="card"><h2 class="nomargin">Verein</h2><p class="small">Du bist Admin: Personen und Räume ansehen, Funktionärs-Zugang verwalten.</p>${c.saved ? '' : '<p class="small warn">Admin-Schlüssel noch nicht gesichert.</p>'}<a class="btn pri" href="#${kid('/admin')}">Verein verwalten</a></div>`;
+  if (c && c.role === 'F') return '<div class="card"><h2 class="nomargin">Verein</h2><p class="small">Du bist Funktionär: Du siehst alle Mannschaften des Vereins, kannst aber nichts ändern.</p></div>';
+  return `<details class="card"><summary><b>Verein (für den Admin)</b></summary>${cs && cs.ready === false ? `<p class="small">Der Verein ist noch nicht eingerichtet. Das macht der Admin (Haupttrainer) einmalig mit dem Einmal-Code.</p><a class="btn pri" href="#${kid('/clubsetup')}">Verein einrichten</a>` : ''}
+    <p class="small">Hast du den Admin-Schlüssel schon einmal gesichert (Datei)? Hier stellst du ihn auf diesem Gerät wieder her.</p><button class="btn" data-a="admRestore">Admin-Schlüssel wiederherstellen</button><input type="file" id="clubFile" accept=".json,application/json" hidden></details>`;
+}
+function viewClubSetup() {
+  const hd = head('Verein einrichten', '/more', '', 'Einmalig, für den Admin'), cs = CL.st;
+  if (DB.club) return hd + '<div class="card"><p>Dieses Gerät ist schon mit dem Verein verbunden.</p></div>';
+  if (cs && cs.ready) return hd + '<div class="card"><p>Der Verein ist schon eingerichtet. Bist du der Admin? Dann stelle deinen Schlüssel unter «Mehr» → «Verein» wieder her.</p></div>';
+  if (!cs) return hd + '<div class="card"><p class="small muted">Verbinde mit dem Server …</p></div>';
+  return hd + `<div class="card"><p class="small">Als Admin siehst du alle Mannschaftsräume und siehst, wer dabei ist. Das richtest du <b>einmal</b> ein, mit dem Einmal-Code. Die App erzeugt dann deinen Admin-Schlüssel; er liegt nur auf diesem Gerät. Danach lädst du eine Sicherungsdatei herunter.</p>
+    <label>Einmal-Code<input data-b="cs:code" value="${esc((S.cs || {}).code || '')}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Einmal-Code"></label>
+    <button class="btn pri block" data-a="clubSetup">Verein einrichten</button></div>`;
+}
+function roleHooks(p) {   // nach jedem Zeichnen: Personenliste, Admin-Übersicht, Vereinsstatus nachladen
+  if (!SYNC_ON) return;
+  if (p[0] === 'team' && p[1] && p[1] !== 'new' && !p[2]) memLoad(p[1]);
+  if (p[0] === 'admin') admLoad();
+  if ((p[0] === 'more' || p[0] === 'clubsetup') && !CL.st && !CL.busy) { CL.busy = true; clubGet(0).finally(() => { CL.busy = false; if (CL.st && ['more', 'clubsetup'].includes(route().p[0])) render(); }); }
+}
+
 // ---------- Router ----------
 const NEWV = () => head('Neues Training', '/', '', 'Für wen und wie möchtest du starten?') + `<div class="card"><div class="grid2"><label>Mannschaft<select data-b="f:team">${opt('', 'Keine', S.seed.team)}${DB.teams.map(x => opt(x.id, x.name, S.seed.team)).join('')}</select></label><label>Datum (optional)<input type="date" data-b="f:date" value="${esc(S.seed.date)}"></label></div><p class="small muted nomargin">${DB.teams.length ? 'Stufe und – passend zum Wochentag des Datums – Startzeit, Dauer und Ort werden von der Mannschaft übernommen.' : 'Du hast noch keine Mannschaft – <a href="#/teams">Mannschaft anlegen</a>.'}</p></div><div class="col">
   <button class="card choice" data-a="flow" data-k="rtp"><b>📋 Aus dem RTP</b><span class="small muted">Du wählst Stufe, Block und Training (2 Schritte). Das Training enthält gleich alle Blöcke des RTP.</span></button>
@@ -1955,6 +2324,7 @@ function render() {
   const h = location.hash.slice(1) || '/';
   if (h.startsWith('i=')) { unpack(h.slice(2)).then(importData).catch(() => toast('Link konnte nicht gelesen werden')); history.replaceState(null, '', location.pathname + '#/'); return render(); }
   if (h.startsWith('j=')) { const jv = h.slice(2); history.replaceState(null, '', location.pathname + location.search + '#/'); spJoinOpen(jv); return render(); }
+  if (h.startsWith('f=')) { const fv = h.slice(2); history.replaceState(null, '', location.pathname + location.search + '#/'); funcJoinOpen(fv); return render(); }   // Funktionärs-Link: sofort aus der Adresse entfernen
   const r = route(h), p = r.p;
   let html = '', tab = '/' + (p[0] || ''), run = false;
   // Zustand aus der Adresse (nicht aus flüchtigen Variablen): Ablauf «Neues Training», Übungswahl für ein Training, Blockplanung, Mannschaftsbereich
@@ -1989,6 +2359,8 @@ function render() {
     html = b ? viewBlock(st, b) : viewRtp();
   } else if (p[0] === 'season') html = viewSeason();
   else if (p[0] === 'plan') { html = viewPlan(); tab = '/'; }
+  else if (p[0] === 'admin') { html = viewAdmin(); tab = '/more'; }
+  else if (p[0] === 'clubsetup') { html = viewClubSetup(); tab = '/more'; }
   else if (p[0] === 'more') html = viewMore();
   else if (p[0] === 'help') { html = viewHelp(); tab = '/more'; }
   else html = viewHome();
@@ -1999,7 +2371,7 @@ function render() {
   if (!run) S.runBack = false;
   if (!run && S.run) { S.run = null; runKeep(); wakeLock(false); }
   document.body.classList.toggle('running', run);
-  $('#app').innerHTML = html; roApply();
+  $('#app').innerHTML = html; roApply(); clubBanner(); roleHooks(p);
   if (S.slide) { const k = S.slide, el = $('#app'); S.slide = null; el.classList.remove('sl-n', 'sl-p'); void el.offsetWidth; el.classList.add('sl-' + k); setTimeout(() => el.classList.remove('sl-' + k), 450); }   // kurze Wechsel-Animation beim Blättern zwischen Trainings
   const cb = $('.crumbs'); if (cb) cb.scrollLeft = cb.scrollWidth;   // Brotkrumen: bei Platzmangel die aktuelle Seite (rechts) sichtbar machen
   $('#nav').innerHTML = NAV.map(([k, l, i]) => `<a href="#${k}" class="${tab === k ? 'on' : ''}" ${tab === k ? 'aria-current="page"' : ''}><span>${i}</span>${l}</a>`).join('');
@@ -2149,10 +2521,14 @@ const A = {
   shCopy() { navigator.clipboard.writeText(S.share.url).then(() => toast('Link kopiert'), () => prompt('Link kopieren:', S.share.url)); },
   shFile() { download(S.share.file, S.share.data); },
   shareApp() { const url = appUrl(); if (navigator.share) navigator.share({ title: 'Unihockey Trainingsplaner', url }).catch(() => { }); else navigator.clipboard.writeText(url).then(() => toast('Link kopiert')); },
-  expAll() { download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings, c: DB.custom, n: DB.notes, m: DB.teams.map(tm => teamMeta(tm, true)), s: DB.seasons, season: DB.season, ...(DB.spaces && Object.keys(DB.spaces).length ? { sp: DB.spaces } : {}) }); },
+  expAll() {   // ohne die Vereinskopien (Admin/Funktionär): die gehören nicht in eine Sicherungsdatei
+    const vt = new Set(DB.teams.filter(tm => (spOf(tm.id) || {}).via).map(tm => tm.id)), sp = Object.fromEntries(Object.entries(DB.spaces || {}).filter(([, v]) => !v.via)), s = Object.fromEntries(Object.entries(DB.seasons).filter(([k]) => !vt.has(k)));
+    download(`unihockey-trainings-${iso(new Date())}.json`, { v: 1, t: DB.trainings.filter(t => !vt.has(t.teamId)), c: DB.custom, n: DB.notes, m: DB.teams.filter(tm => !vt.has(tm.id)).map(tm => teamMeta(tm, true)), s, season: DB.season, ...(Object.keys(sp).length ? { sp } : {}) });
+  },
   impFile() { $('#file').click(); },
   impOk: doImport,
   spSetup(el) {
+    if (!meName()) return askName(() => A.spSetup(el));
     const id = el.dataset.k; el.disabled = true; toast('Raum wird eingerichtet …');
     spSetup(id).then(ok => { render(); if (ok) spInviteModal(id, 'w'); }).catch(e => { el.disabled = false; const x = spErr(e); toast(x.state === 'off' ? 'Keine Verbindung zum Server – bitte mit Internet nochmals versuchen.' : x.msg); });
   },
@@ -2161,7 +2537,7 @@ const A = {
   spJoinOk: spJoinDo,
   spRenew(el) {
     const id = el.dataset.k;
-    modal(`<h2>Zugang erneuern?</h2><p>Es gibt dann einen neuen Schlüssel und neue Links. <b>Alle bisherigen Links – auch deine bereits verschickten – funktionieren nicht mehr.</b> Wer weiter abgleichen soll, braucht den neuen Link von dir.</p><p class="small muted">Nutze das, wenn jemand nicht mehr dabei sein soll oder ein Link in falsche Hände geraten ist.</p><div class="col"><button class="btn danger" data-a="spRenewOk" data-k="${esc(id)}">Zugang erneuern</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+    modal(`<h2>Zugang erneuern?</h2><p>Es gibt dann neue Links. <b>Alle bisherigen Links – auch deine bereits verschickten – funktionieren nicht mehr.</b> Wer weiter abgleichen soll, braucht den neuen Link.</p><p class="small muted">Nutze das, wenn jemand nicht mehr dabei sein soll oder ein Link in falsche Hände geraten ist.</p><div class="col"><button class="btn danger" data-a="spRenewOk" data-k="${esc(id)}">Zugang erneuern</button><button class="btn" data-a="close">Abbrechen</button></div>`);
   },
   spRenewOk(el) {
     const id = el.dataset.k; el.disabled = true;
@@ -2173,8 +2549,8 @@ const A = {
   },
   spDissolveOk(el) {
     const id = el.dataset.k, sp = spOf(id); el.disabled = true;
-    spLock(async () => { try { await spRpc('space_delete', { p_id: sp.id, p_o: sp.o }); } catch (e) { if (!(e.status === 400 && e.message === 'kein zugriff')) throw e; } delete DB.spaces[id]; flush(); })
-      .then(() => { closeModal(); render(); toast('Raum aufgelöst – deine Daten bleiben'); }).catch(e => { closeModal(); toast(spErr(e).msg); });
+    spLock(async () => { try { await spRpc('space_delete', { p_id: sp.id, p_o: sp.role === 'A' ? sp.t : sp.o }); } catch (e) { if (!(e.status === 400 && e.message === 'kein zugriff')) throw e; } if (sp.via) viaDrop(id); else delete DB.spaces[id]; flush(); })
+      .then(() => { closeModal(); if (!teamById(id)) goR('/teams'); else render(); toast('Raum aufgelöst – deine Daten bleiben'); }).catch(e => { closeModal(); toast(spErr(e).msg); });
   },
   spLeave(el) {
     const id = el.dataset.k, tm = teamById(id);
@@ -2193,6 +2569,7 @@ const A = {
     const sp = Object.keys(DB.spaces || {}).length, nT = DB.trainings.length, nM = DB.teams.length;
     modal(`<h2>Alle Daten auf diesem Gerät löschen?</h2><p class="small nomargin">Das wird gelöscht:</p>
       <ul class="small"><li>${nT} Training${nT === 1 ? '' : 's'} samt Anwesenheit und Reflexionen</li><li>${nM} Mannschaft${nM === 1 ? '' : 'en'} mit Spielerlisten und Saisonplanung</li><li>${DB.custom.length} eigene Übung${DB.custom.length === 1 ? '' : 'en'} und ${Object.keys(DB.notes).length} Notiz${Object.keys(DB.notes).length === 1 ? '' : 'en'}</li>${sp ? `<li>${sp} Zugang${sp === 1 ? '' : 'e'} zu Mannschaftsräumen</li>` : ''}<li>der Stand des Hallenmodus</li></ul>
+      ${DB.club ? (DB.club.role === 'A' ? '<p class="small warn"><b>Auch dein Admin-Schlüssel wird gelöscht.</b> Ohne Sicherungsdatei verlierst du den Zugang zu allen Räumen des Vereins.</p>' : '<p class="small warn"><b>Auch dein Funktionärs-Zugang wird gelöscht.</b> Du brauchst dann einen neuen Link vom Admin.</p>') : ''}
       <p class="small"><b>Das lässt sich nicht rückgängig machen.</b>${isHelperDevice() ? '' : ' Sichere vorher mit «Alles exportieren».'}</p>
       ${sp ? '<p class="small"><b>Mannschaftsräume auf dem Server werden dadurch nicht gelöscht.</b> Die anderen Trainer behalten ihre Daten, und mit dem Einladungslink kannst du wieder beitreten. Willst du einen eigenen Raum ganz entfernen, löse ihn vorher auf der Mannschaftsseite mit «Raum auflösen» auf.</p>' : ''}
       <div class="col"><button class="btn danger" data-a="wipeOk">Alles löschen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
@@ -2296,17 +2673,87 @@ const A = {
     const w = el.closest('.rfx').querySelector('.rfwhy'); if (w) w.hidden = x.v === undefined; if (x.v === undefined && !String(x.w || '').trim()) delete m.ph[k]; touch(t); reflUp(t);
   },
 };
+// ---------- Aktionen: Verein und Rollen ----------
+const personOf = (tid, room, dev) => { const l = room ? ((((S.adm || {}).rooms || []).find(r => r.id === room) || {}).persons || []) : ((SP.mem[tid] || {}).list || []); return l.find(p => p.dev === dev) || null; };
+Object.assign(A, {
+  roleOpen: roleModal,
+  roleDone() { closeModal(); render(); },
+  roleSet(el) {
+    const k = el.dataset.k; if (!myRoles().some(r => r.k === k)) return;
+    DB.activeRole = k; applyRole(); save(); closeModal(); goR('/'); toast('Rolle: ' + ROLE_NAME[k]);
+    SP.viaAt = 0; spAuto();
+  },
+  nameOk() {
+    const v = String(($('#nameIn') || {}).value || '').replace(/\s+/g, ' ').trim(); if (!v) return toast('Bitte gib einen Namen ein');
+    meGet().name = v.slice(0, 40); flush(); const cb = S.nameCb; S.nameCb = null; closeModal(); if (cb) cb(); else render();
+  },
+  clubSetup() {
+    const code = String((S.cs || {}).code || '').trim(); if (!code) return toast('Bitte gib den Einmal-Code ein');
+    if (!meName()) return askName(() => A.clubSetup(), 'Als Admin erscheinst du mit diesem Namen in der Personenliste des Vereins.');
+    toast('Verein wird eingerichtet …');
+    clubSetupDo(code).then(() => { S.cs = null; clubPing(true); goR('/admin'); setTimeout(backupModal, 80); }).catch(e => { const x = spErr(e); toast(x.state === 'off' ? 'Keine Verbindung zum Server – bitte mit Internet nochmals versuchen.' : x.msg); });
+  },
+  admBackup: backupModal,
+  admBackupDl() { download(`unihockey-admin-schluessel-${iso(new Date())}.json`, backupObj()); S.bkDl = true; const b = $('[data-a=admBackupOk]'); if (b) b.disabled = false; toast('Datei heruntergeladen'); },
+  admBackupOk() { if (!S.bkDl || !DB.club) return; DB.club.saved = true; DB.club.savedAt = Date.now(); flush(); closeModal(); render(); toast('Admin-Schlüssel gesichert'); },
+  admRestore() { const f = $('#clubFile'); if (f) f.click(); },
+  admRestoreOk() {
+    const d = S.restore; S.restore = null; if (!d) return; closeModal(); toast('Schlüssel wird geprüft …');
+    clubRestore(d).then(() => { goR('/admin'); toast('Admin-Schlüssel wiederhergestellt'); SP.viaAt = 0; clubPing(true); viaRefresh().then(() => spAuto()); }).catch(e => toast(e && e.local ? e.message : spErr(e).state === 'off' ? 'Keine Verbindung zum Server.' : spErr(e).msg));
+  },
+  funcNew() {
+    closeModal(); toast('Funktionärs-Zugang wird eingerichtet …');
+    funcMake().then(r => { SP.viaAt = 0; render(); funcModal(r.pending ? `<p class="small">${r.pending} Raum${r.pending === 1 ? ' ist' : 'räume sind'} für dich noch nicht freigegeben. Der Zugang dafür folgt automatisch, sobald der Trainer die App öffnet.</p>` : ''); }).catch(e => toast(spErr(e).msg));
+  },
+  funcShow() { funcModal(); },
+  funcRenew() { modal('<h2>Funktionärs-Zugang erneuern?</h2><p>Es gibt einen neuen Funktionärs-Link. <b>Alle bisherigen Funktionärs-Links funktionieren dann nicht mehr.</b> Schicke den neuen Link allen Funktionären, die weiter dabei sein sollen.</p><div class="col"><button class="btn danger" data-a="funcNew">Zugang erneuern</button><button class="btn" data-a="close">Abbrechen</button></div>'); },
+  funcPaste() {
+    const v = (($('#funcLink') || {}).value || '').trim(), m = v.match(/(\S*)#f=([\w.-]+)/);
+    if (!v) return toast('Füge zuerst den Link ein');
+    const bare = u => u.replace(/[?#].*$/, '').replace(/index\.html$/, '').replace(/\/+$/, '');
+    if (!m || (m[1] && bare(m[1]) !== bare(appUrl()))) return modal(`<h2>Das ist kein Funktionärs-Link</h2><p class="small">Ein Funktionärs-Link dieser App beginnt mit <b>${esc(appUrl())}</b> und enthält <b>#f=</b>. Bitte den Admin um einen neuen Link.</p><button class="btn" data-a="close">Schliessen</button>`);
+    funcJoinOpen(m[2]);
+  },
+  funcJoinOk: funcJoinDo,
+  admReload() { toast('Wird aktualisiert …'); admLoad(true); },
+  admRenew(el) { modal(`<h2>Zugang erneuern?</h2><p>Es gibt neue Assistenz-Links. <b>Alle bisherigen Links dieser Mannschaft funktionieren dann nicht mehr.</b> Wer weiter dabei sein soll, braucht den neuen Link.</p><div class="col"><button class="btn danger" data-a="admRenewOk" data-k="${esc(el.dataset.k)}">Zugang erneuern</button><button class="btn" data-a="close">Abbrechen</button></div>`); },
+  admRenewOk(el) {
+    const id = el.dataset.k; el.disabled = true;
+    spRenewDo(id).then(ok => { admLoad(true); if (ok) { render(); spInviteModal(id, 'w', true); } else { closeModal(); toast((SP.st[id] && SP.st[id].msg) || 'Zugang konnte nicht erneuert werden'); } }).catch(e => { closeModal(); toast(spErr(e).msg); });
+  },
+  admDelRoom(el) { modal(`<h2>Raum${el.dataset.n ? ' «' + esc(el.dataset.n) + '»' : ''} löschen?</h2><p>Der Raum wird auf dem Server gelöscht. Die Kopien auf den Geräten der Trainer bleiben erhalten, gleichen sich aber nicht mehr ab. <b>Das lässt sich nicht rückgängig machen.</b></p><div class="col"><button class="btn danger" data-a="admDelRoomDo" data-r="${esc(el.dataset.r)}">Raum löschen</button><button class="btn" data-a="close">Abbrechen</button></div>`); },
+  admDelRoomDo(el) {
+    const rid = el.dataset.r, c = DB.club; el.disabled = true; if (!c) return;
+    spLock(async () => { await spRpc('space_delete', { p_id: rid, p_o: c.t }); for (const [tid, sp] of Object.entries(DB.spaces || {})) if (sp.id === rid) { if (sp.via) viaDrop(tid); else delete DB.spaces[tid]; } flush(); })
+      .then(() => { closeModal(); toast('Raum gelöscht'); admLoad(true); render(); }).catch(e => { closeModal(); toast(spErr(e).msg); });
+  },
+  admCmRm(el) { modal(`<h2>«${esc(el.dataset.n || 'Ohne Namen')}» entfernen?</h2><p class="small">Die Person verschwindet aus der Liste. <b>Den Zugang sperrt das noch nicht:</b> Dafür gibt es «Funktionärs-Zugang erneuern» (dann brauchen alle einen neuen Link).</p><div class="col"><button class="btn danger" data-a="admCmRmDo" data-dev="${esc(el.dataset.dev)}">Aus der Liste entfernen</button><button class="btn" data-a="close">Abbrechen</button></div>`); },
+  admCmRmDo(el) { const c = DB.club; if (!c) return; el.disabled = true; spRpc('club_member_remove', { p_admin: c.t, p_dev: el.dataset.dev }).then(() => { closeModal(); toast('Aus der Liste entfernt'); admLoad(true); }).catch(e => { closeModal(); toast(spErr(e).msg); }); },
+  memRm(el) {
+    const d = el.dataset, sp = spOf(d.k), p = personOf(d.k, d.room, d.dev), canRenew = !!sp && (sp.role === 'o' || sp.role === 'A'), nm = esc((p && p.name) || 'Ohne Namen');
+    modal(`<h2>«${nm}» entfernen?</h2><p class="small">Die Person verschwindet aus der Liste. <b>Den Zugang sperrt das noch nicht</b> – wer den Link schon hat, kann weiter abgleichen. Dafür gibt es «Zugang erneuern»: Dann funktionieren alle alten Links nicht mehr, und alle anderen brauchen einen neuen Link.</p>
+      <div class="col">${canRenew ? `<button class="btn danger" data-a="memRmDo" data-k="${esc(d.k)}" data-room="${esc(d.room || '')}" data-dev="${esc(d.dev)}" data-renew="1">Entfernen und Zugang erneuern</button>` : ''}<button class="btn" data-a="memRmDo" data-k="${esc(d.k)}" data-room="${esc(d.room || '')}" data-dev="${esc(d.dev)}" data-renew="0">Nur aus der Liste entfernen</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+  },
+  memRmDo(el) {
+    const d = el.dataset, tid = d.k, sp = spOf(tid), room = d.room ? { id: d.room, t: DB.club && DB.club.t } : sp && { id: sp.id, t: sp.t };
+    if (!room || !room.t) return closeModal(); el.disabled = true;
+    spRpc('member_remove', { p_id: room.id, p_t: room.t, p_dev: d.dev }).then(async () => {
+      if (d.renew === '1' && sp) { const ok = await spRenewDo(tid); closeModal(); memLoad(tid, true); admLoad(true); if (ok) { render(); spInviteModal(tid, 'w', true); } else toast((SP.st[tid] && SP.st[tid].msg) || 'Zugang konnte nicht erneuert werden'); }
+      else { closeModal(); memLoad(tid, true); admLoad(true); toast('Aus der Liste entfernt – der Zugang ist noch nicht gesperrt'); }
+    }).catch(e => { closeModal(); toast(spErr(e).msg); });
+  },
+});
 document.addEventListener('toggle', ev => { const c = ev.target.classList; if (!c) return; if (c.contains('rtpsum')) S.sumClosed = !ev.target.open; else if (c.contains('rfpl')) S.rfPl = ev.target.open; else if (c.contains('tsec')) ev.target.open ? S.tsec.add(ev.target.dataset.k) : S.tsec.delete(ev.target.dataset.k); else if (c.contains('expl')) ev.target.open ? S.expl.add(ev.target.dataset.k) : S.expl.delete(ev.target.dataset.k); }, true);
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;
-  if (RO_A.has(el.dataset.a) && roTeam()) { ev.preventDefault(); toast('Nur lesen – Änderungen macht der Haupttrainer'); return; }
+  if (RO_A.has(el.dataset.a) && (roTeam() || curRole() === 'F')) { ev.preventDefault(); toast(curRole() === 'F' ? 'Funktionär – nur ansehen' : 'Nur lesen – Änderungen macht der Haupttrainer'); return; }
   if (el.tagName !== 'A') ev.preventDefault();
   fn(el, ev);
 });
 function onInput(ev) {
   const el = ev.target.closest('[data-b]'); if (!el) return;
-  if (!/^(aw|l|f|tsh):/.test(el.dataset.b) && roTeam()) return;
+  if (!/^(aw|l|f|tsh|me|cs):/.test(el.dataset.b) && roTeam()) return;
   const [k, a, b] = el.dataset.b.split(':'), v = el.type === 'number' ? (el.value === '' ? '' : +el.value) : el.value;
   const rer = el.dataset.r && ev.type === 'change';
   if (k === 't' && a === 'teamId') { const t = curT(), tm = teamById(v); if (v === '__txt') return; const old = teamOf(t); if (tm) applyTeam(t, tm); else setTeam(t, null); if (old && (!tm || old.id !== tm.id)) spDel('t', old.id, t.id); touch(t); }
@@ -2339,6 +2786,8 @@ function onInput(ev) {
   }
   else if (k === 'c') { S.form[a] = v; if (S.fx && S.fx.bad[a]) { delete S.fx.bad[a]; const l = el.closest('label'); if (l) { l.classList.remove('bad'); const m = l.querySelector('.reqmsg'); if (m) m.remove(); } } }
   else if (k === 'x') { const t = curT(), it = t && t.items.find(x => x.id === a), c = it && customOf(it); if (c) { if (b === 'name') { if (!String(v).trim()) return; linkC(c); c.name = String(v); } else c[b] = v; syncCustom(c); } }
+  else if (k === 'me') { meGet().name = String(v).slice(0, 40); save(); return; }
+  else if (k === 'cs') { S.cs = S.cs || {}; S.cs[a] = String(v).trim(); return; }
   else if (k === 'pl') S.pf[a] = v;
   else if (k === 'pb') S.pb[a] = a === 'leader' ? el.checked : v;
   else if (k === 'aw') S.aw[a] = v;
@@ -2355,11 +2804,13 @@ function onInput(ev) {
 }
 document.addEventListener('input', onInput);
 document.addEventListener('change', ev => {
+  if (ev.target.id === 'clubFile') { const f = ev.target.files[0]; ev.target.value = ''; if (f) f.text().then(x => { const d = JSON.parse(x); S.restore = d; modal('<h2>Admin-Schlüssel wiederherstellen?</h2><p class="small">Dieses Gerät wird Admin des Vereins: Es sieht alle Mannschaftsräume und kann sie ändern. Ein bisheriger Vereinszugang auf diesem Gerät wird ersetzt.</p><div class="col"><button class="btn pri" data-a="admRestoreOk">Wiederherstellen</button><button class="btn" data-a="close">Abbrechen</button></div>'); }).catch(() => toast('Datei konnte nicht gelesen werden')); return; }
   if (ev.target.id === 'file') { const f = ev.target.files[0]; if (f) f.text().then(x => importData(JSON.parse(x))).catch(() => toast('Datei konnte nicht gelesen werden')); ev.target.value = ''; return; }
   if (ev.target.dataset.r) onInput(ev);
 });
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+applyRole();
 render();
 if (SYNC_ON) {   // Abgleich: beim Start, bei Rückkehr in die App, wenn wieder online, und jede Minute solange die App sichtbar ist
   addEventListener('online', spAuto); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') spAuto(); });
