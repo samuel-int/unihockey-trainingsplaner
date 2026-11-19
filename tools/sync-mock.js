@@ -31,7 +31,7 @@ const FN = {
   club_setup(p) {
     need(p, ['p_code', 'p_admin', 'p_pub_admin']);
     if (len(p.p_admin) < 20 || len(p.p_pub_admin) < 20) fail('ungueltig');
-    if (club.admin_hash || !club.setup_hash || club.setup_hash !== hash(p.p_code)) fail('code ungueltig oder verein schon eingerichtet');
+    if (club.admin_hash || !club.setup_hash || club.setup_hash !== hash(p.p_code)) return false;   // wie supabase-verein.sql: Fehlversuch ohne Fehlermeldung
     club.admin_hash = hash(p.p_admin); club.pub_admin = p.p_pub_admin; club.setup_hash = null; persist(); return true;
   },
   club_admin_rotate(p) {

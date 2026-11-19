@@ -2179,7 +2179,8 @@ function backupModal() {
 }
 async function clubSetupDo(code) {
   const kp = await newPair(), tok = b64u(spRnd(24));
-  await spRpc('club_setup', { p_code: code, p_admin: tok, p_pub_admin: kp.pub });
+  const ok = await spRpc('club_setup', { p_code: code, p_admin: tok, p_pub_admin: kp.pub });
+  if (ok !== true) throw spErrObj('Der Code stimmt nicht, oder der Verein ist schon eingerichtet.', { local: true });
   viaDropAll(); DB.club = { role: 'A', t: tok, priv: kp.priv, pub: kp.pub, saved: false }; DB.activeRole = 'A'; CL.at = 0; CL.bad = false; applyRole(); flush();
 }
 async function clubRestore(d) {

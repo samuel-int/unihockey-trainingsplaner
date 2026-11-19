@@ -1,5 +1,6 @@
 -- Verein und Rollen für den Trainingsplaner (Ergänzung zu tools/supabase.sql; danach im SQL-Editor ausführen).
--- Mehrfaches Ausführen ist unschädlich.
+-- Mehrfaches Ausführen ist unschädlich. Reihenfolge: zuerst supabase.sql, dann diese Datei. supabase.sql danach NICHT erneut ausführen
+-- (sie würde space_get/put/delete auf die alte Version ohne Admin und Funktionär zurücksetzen); bei Bedarf beide Dateien nacheinander.
 --
 -- Rollen
 --   A  Admin       (genau eine Person; Admin-Token): liest und schreibt alle Räume, erneuert und löscht sie, sieht alle Personen
@@ -19,9 +20,13 @@ create table if not exists public.club (
   func_hash  text,
   pub_admin  text,            -- öffentlicher Schlüssel Admin (JWK als Text)
   pub_func   text,            -- öffentlicher Schlüssel Funktionäre (JWK als Text)
+  setup_fails int not null default 0,   -- Fehlversuche beim Einmal-Code (Schutz gegen Raten)
+  setup_last  timestamptz,
   updated    timestamptz not null default now()
 );
 insert into public.club(id) values (1) on conflict (id) do nothing;
+alter table public.club add column if not exists setup_fails int not null default 0;
+alter table public.club add column if not exists setup_last timestamptz;
 alter table public.club enable row level security;
 revoke all on table public.club from anon, authenticated;
 
@@ -75,10 +80,14 @@ create or replace function public.club_setup(p_code text, p_admin text, p_pub_ad
 returns boolean language plpgsql security definer set search_path = public, extensions
 as $$
 begin
+  if (select setup_fails >= 10 and setup_last > now() - interval '1 hour' from public.club where id = 1) then raise exception 'zu viele versuche, in einer stunde nochmals'; end if;
   if char_length(coalesce(p_admin, '')) < 20 or char_length(coalesce(p_pub_admin, '')) < 20 then raise exception 'ungueltig'; end if;
   update public.club c set admin_hash = public.sp_hash(p_admin), pub_admin = p_pub_admin, setup_hash = null, updated = now()
    where c.id = 1 and c.admin_hash is null and c.setup_hash is not null and c.setup_hash = public.sp_hash(p_code);
-  if not found then raise exception 'code ungueltig oder verein schon eingerichtet'; end if;
+  if not found then
+    update public.club set setup_fails = case when setup_last > now() - interval '1 hour' then setup_fails + 1 else 1 end, setup_last = now() where id = 1;
+    return false;   -- kein raise, sonst wuerde der Zaehler zurueckgerollt
+  end if;
   return true;
 end $$;
 
@@ -102,6 +111,7 @@ begin
   if char_length(coalesce(p_func, '')) < 20 or char_length(coalesce(p_pub_func, '')) < 20 then raise exception 'ungueltig'; end if;
   update public.club set func_hash = public.sp_hash(p_func), pub_func = p_pub_func, updated = now() where id = 1;
   delete from public.club_members where role = 'F';
+  delete from public.members where role = 'F';
   return true;
 end $$;
 
@@ -185,7 +195,9 @@ begin
   if p_w = p_r or p_w = p_o or p_r = p_o then raise exception 'token muessen verschieden sein'; end if;
   if char_length(coalesce(p_data, '')) > 3000000 then raise exception 'zu gross'; end if;
   update public.spaces s set w_hash = public.sp_hash(p_w), r_hash = public.sp_hash(p_r), data = coalesce(p_data, s.data),
-         wa = coalesce(p_wa, s.wa), wf = coalesce(p_wf, s.wf), ver = s.ver + 1, updated = now()
+         wa = case when p_data is not null then p_wa else coalesce(p_wa, s.wa) end,   -- neuer Schluessel: alte Verpackung waere falsch
+         wf = case when p_data is not null then p_wf else coalesce(p_wf, s.wf) end,
+         ver = s.ver + 1, updated = now()
    where s.id = p_id returning s.ver into n;
   delete from public.members m where m.space_id = p_id and m.role in ('w', 'r');
   return n;
