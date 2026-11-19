@@ -1,7 +1,6 @@
 // Goalie-Inhalte: eigene Ergänzung zur App (NICHT Teil des offiziellen RTP von swiss unihockey).
 // Die RTP-Dateien enthalten für Torhüter nur den Slot "Skills o. Goalie / Einschiessen".
 window.GOALIE = {
-  note: 'Die Goalie-Inhalte sind eine eigene Ergänzung dieser App und nicht Teil des offiziellen RTP. Passe sie frei an dein Team an.',
   cats: ['Grundposition & Bewegung', 'Fangen & Blocken', 'Abpraller-Kontrolle', 'Auswurf & Spielaufbau', 'Reaktion & Wahrnehmung', 'Spielsituationen', 'Kommunikation', 'Beweglichkeit & Athletik'],
   ALL: ['F', 'E', 'D', 'U14', 'U16', 'U18'],
   exercises: [
