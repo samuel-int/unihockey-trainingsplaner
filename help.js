@@ -3,11 +3,18 @@
 window.HELP = [
   { id: 'start', t: 'Erste Schritte', s: [
     '<b>App installieren:</b> Android (Chrome): Menü ⋮ → «App installieren». iPhone (Safari): Teilen-Symbol → «Zum Home-Bildschirm». Danach öffnest du die App wie jede andere, auch ohne Internet.',
-    '<b>Du bist Co-Trainer?</b> Öffne auf diesem Handy den Einladungslink, den dir dein Haupttrainer geschickt hat (zum Beispiel per WhatsApp). Tippe auf «Beitreten»: Die Mannschaft mit allen Trainings erscheint, du musst nichts abtippen.',
-    '<b>Du bist Haupttrainer?</b> Tippe unten auf «Teams» und dann auf «+ Neu», um deine Mannschaft anzulegen. Wie du Co-Trainer einlädst, steht weiter unten.',
-    '<b>«Co-Trainer»</b> heisst: du darfst alles ansehen und ändern (Trainings, Anwesenheit, Reflexion). Alles gleicht sich automatisch mit den anderen ab.',
-    '<b>«Nur lesen»</b> heisst: du siehst alles, kannst aber nichts ändern. Das ist für Helfer im Trainerstaff gedacht, die nur mitschauen. Nicht für Eltern: Der Link zeigt auch Anwesenheiten und Notizen zu Spielern.',
-    'Es gibt kein Konto und kein Passwort. Der Einladungslink ist dein Schlüssel zur Mannschaft: Schick ihn nicht weiter und stell ihn nicht in grosse Gruppenchats.'
+    '<b>Du bist Assistenz?</b> Öffne auf diesem Handy den Einladungslink, den dir dein Trainer geschickt hat (zum Beispiel per WhatsApp). Gib deinen Namen ein und tippe auf «Beitreten»: Die Mannschaft mit allen Trainings erscheint, du musst nichts abtippen.',
+    '<b>Du bist Trainer?</b> Tippe unten auf «Teams» und dann auf «+ Neu», um deine Mannschaft anzulegen. Wie du deine Assistenz einlädst, steht weiter unten.',
+    '<b>Du bist Funktionär im Vorstand?</b> Öffne den Funktionärs-Link, den dir der Admin geschickt hat, und gib deinen Namen ein. Du siehst dann alle Mannschaften, kannst aber nichts ändern.',
+    'Es gibt kein Konto und kein Passwort. Der Einladungslink ist dein Schlüssel zur Mannschaft: Schick ihn nicht weiter und stell ihn nicht in grosse Gruppenchats. Wer du bist, siehst du oben rechts (Name und Rolle).'
+  ] },
+  { id: 'roles', t: 'Rollen und Name', s: [
+    '<b>Name:</b> Beim ersten Mal fragt die App «Wie heisst du?». Der Name erscheint bei den anderen Personen deiner Mannschaft (verschlüsselt; nur die Mannschaft kann ihn lesen). Ändern kannst du ihn oben rechts: Tippe auf Name und Rolle.',
+    '<b>Trainer:</b> verwaltet seine Mannschaft: planen, Spielerliste, Assistenz einladen, Zugang erneuern, Raum auflösen. Er sieht im Mannschaftsraum, wer dabei ist.',
+    '<b>Assistenz:</b> ist über einen Einladungslink im Mannschaftsraum, organisiert und führt Trainings durch. Sie kann den Raum nicht löschen, niemanden einladen und den Zugang nicht erneuern.',
+    '<b>Funktionär:</b> Vorstand. Sieht alle Mannschaften des Vereins, ändert aber nichts. Der Zugang kommt über einen Link vom Admin.',
+    '<b>Admin:</b> nur der Haupttrainer. Sieht und ändert alle Mannschaften, sieht auf der Seite «Mehr → Verein», wer dabei ist, verwaltet Funktionäre und kann Personen entfernen und den Zugang erneuern. Den Admin-Schlüssel sichert er in einer Datei: Ohne sie ist der Admin-Zugang weg, wenn das Gerät ausfällt.',
+    '<b>Rolle wechseln:</b> Hast du mehrere Rollen (zum Beispiel Admin und Trainer), tippe oben rechts auf Name und Rolle und wähle die Rolle. In der Rolle Admin oder Funktionär siehst du alle Mannschaften des Vereins; in den anderen Rollen nur deine eigenen.'
   ] },
   { id: 'prep', t: 'Ein Training vorbereiten', s: [
     'Tippe unten auf «Trainings» und dann auf das Training. Es öffnet sich der Editor mit allen Übungen in der Reihenfolge der Halle.',
@@ -29,7 +36,7 @@ window.HELP = [
     'Hake ab, wer da ist. Mit «Alle anwesend» geht es schneller, dann nimmst du nur die Fehlenden heraus.',
     'Wähle bei Bedarf die Art: Training, Wettkampf oder Trainingstag. Das braucht der Haupttrainer für die J+S-Abrechnung.',
     'Die Übersicht pro Mannschaft steht auf der Mannschaftsseite unter «Anwesenheit / J+S».',
-    'Die Spielerliste pflegt der Haupttrainer. Hast du Co-Trainer-Rechte, kannst du sie auch ergänzen.'
+    'Die Spielerliste pflegt der Haupttrainer. Hast du Assistenz-Rechte, kannst du sie auch ergänzen.'
   ] },
   { id: 'refl', t: 'Reflexion ausfüllen', s: [
     'Nach dem Training tippst du auf «Reflexion» (oder sie kommt nach der Anwesenheit). Es dauert zwei bis drei Minuten.',
@@ -47,7 +54,7 @@ window.HELP = [
   ] },
   { id: 'plan', t: 'Mannschaft, Saison und Blöcke planen', host: true, s: [
     '<b>Mannschaft anlegen:</b> «Teams» → «+ Neu». Trage Name, Stufe und Farbe ein. Setze mit «+ Trainingszeit hinzufügen» pro Einheit Wochentag, Start, Dauer und Ort.',
-    '<b>Co-Trainer einladen:</b> Öffne die Mannschaft und tippe auf «Mannschaft teilen». Tippe auf «Co-Trainer einladen» (darf ändern) oder «Nur-Lesen-Link» und schick den Link <b>einzeln</b> an die Person.',
+    '<b>Assistenz einladen:</b> Öffne die Mannschaft und tippe auf «Mannschaft teilen», dann auf «Assistenz einladen». Schick den Link <b>einzeln</b> an die Person. Wer nicht mehr dabei sein soll, entfernst du in der Liste «Personen im Raum» und tippst auf «Zugang erneuern».',
     '<b>Einzelnes Training:</b> «Trainings» → «+ Neu». Wähle «Aus dem RTP», «Über die Saisonplanung» oder «Leeres Training».',
     '<b>Ganzen Block planen:</b> Auf der Mannschaftsseite «Ganzen Block planen». Wähle den Block und den Start (jetzt oder nach Saisonplan), prüfe die Vorschau und tippe auf «Trainings anlegen». Danach geht «Rückgängig».',
     '<b>Saison:</b> Unter «Trainings» → «Saison» siehst du den Wochenplan. Die Saison läuft vom 1. Mai bis 30. April. Ferienwochen und eigenen Saisonstart stellst du dort ein.',
@@ -64,9 +71,10 @@ window.HELP = [
   ] },
   { id: 'faq', t: 'Häufige Fragen', s: [
     '<b>Ich sehe die Mannschaft nicht.</b> Öffne den Einladungslink nochmals, auf diesem Handy und mit Internet, und tippe auf «Beitreten». Klappt es immer noch nicht, frag den Haupttrainer, ob der Link noch gilt.',
+    '<b>Wie sehe ich, wer in meiner Mannschaft ist?</b> Auf der Mannschaftsseite steht die Karte «Personen im Raum» mit Name, Rolle und «zuletzt aktiv». Jeder meldet sich beim Abgleich mit seinem Namen.',
     '<b>Meine Änderung ist beim anderen nicht da.</b> Beide Handys brauchen Internet. Öffne die App einmal: Sie gleicht sich beim Öffnen, bei Rückkehr in die App und danach laufend automatisch ab. Ohne Netz wird es nachgeholt, sobald du wieder online bist.',
-    '<b>Ich habe ein neues Handy.</b> Bitte den Haupttrainer um einen Einladungslink und öffne ihn auf dem neuen Handy. Hat der Haupttrainer inzwischen «Zugang erneuern» getippt, braucht er dafür ohnehin einen neuen. Deine Daten holt sich das neue Handy automatisch aus der Mannschaft.',
-    '<b>Ich kann nichts ändern.</b> Dann hast du die Rolle «Nur lesen». Frag den Haupttrainer nach einem Co-Trainer-Link.',
+    '<b>Ich habe ein neues Handy.</b> Bitte deinen Trainer um einen Einladungslink und öffne ihn auf dem neuen Handy. Hat er inzwischen «Zugang erneuern» getippt, braucht er dafür ohnehin einen neuen. Der Admin stellt seinen Schlüssel aus der Sicherungsdatei wieder her (Mehr → Verein), ein Funktionär öffnet seinen Link nochmals. Deine Daten holt sich das neue Handy automatisch aus der Mannschaft.',
+    '<b>Ich kann nichts ändern.</b> Dann bist du Funktionär (oben rechts steht die Rolle) oder hast nur einen Lesezugang. Frag deinen Trainer nach einem Assistenz-Link.',
     '<b>Läuft die App auch in der Halle ohne Internet?</b> Ja. Öffne sie vorher einmal mit Internet, dann läuft sie auch ohne.',
     '<b>Eine neue Version holen:</b> Schliesse die App ganz und öffne sie mit Internet neu.'
   ] }
