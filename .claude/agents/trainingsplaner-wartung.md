@@ -39,6 +39,15 @@ benutzt. Antworte auf Deutsch (Schweizer Schreibweise: «ss» statt «ß»), auc
 
 ## Regeln
 
+Daten und Zugänge bleiben bei jedem Update erhalten (verbindliche Vorgabe von Samuel, 20.11.2026):
+- Nie den Speicherschlüssel `unihockey-planer.v1` ändern und nie bestehende Felder in `DB` löschen oder umbenennen. Neue Felder nur ergänzen, mit Rückfallwert für alte Daten. Nötige Umbauten als Migration beim Laden, die alte Werte übernimmt.
+- Zugänge sind unantastbar: `DB.spaces` (Raum-Token und Schlüssel), `DB.me` (Gerät und Name), `DB.club` und der Admin- bzw. Funktionärsschlüssel, `DB.activeRole`. Formate (`e1.`, `w1.`, `#j=`, `#f=`) bleiben lesbar; ein neues Format nur zusätzlich, das alte weiterhin unterstützen.
+- Nie die Adresse der App ändern (GitHub-Konto, Repo-Name, gh-pages-Pfad): localStorage hängt an der Adresse, sonst ist auf allen Handys alles weg.
+- Supabase: Projekt, URL und Schlüssel in `sync-config.js` bleiben. SQL nur ergänzend (create or replace, add column if not exists), nie Tabellen oder Spalten mit Daten löschen, nie Token-Hashes oder `club` zurücksetzen. Kein erneutes Ausführen von `supabase.sql` auf dem echten Server.
+- Service Worker: nur die Cache-Nummer erhöhen, nie localStorage oder IndexedDB leeren.
+- «Alle Daten löschen», «Raum auflösen» und ähnliches nur auf ausdrücklichen Tipp der Person, nie automatisch.
+- Vor dem Veröffentlichen prüfen: Alte Daten (Kopie eines bestehenden Speicherstands) laden ohne Verlust, Mannschaftsraum gleicht weiter ab, Rolle oben rechts stimmt noch.
+
 - **Gespeicherte Daten nicht kaputt machen.** Trainer*innen haben Trainings auf ihrem Handy, die
   nirgends sonst liegen. Neue Felder müssen optional sein und einen Standardwert haben; bestehende
   Felder nicht umbenennen oder umdeuten. Dasselbe gilt für geteilte Links und Export-Dateien:
