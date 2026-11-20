@@ -58,6 +58,7 @@ window.HELP = [
     '<b>Einzelnes Training:</b> «Trainings» → «+ Neu». Wähle «Aus dem RTP», «Über die Saisonplanung» oder «Leeres Training».',
     '<b>Ganzen Block planen:</b> Auf der Mannschaftsseite «Ganzen Block planen». Wähle den Block und den Start (jetzt oder nach Saisonplan), prüfe die Vorschau und tippe auf «Trainings anlegen». Danach geht «Rückgängig».',
     '<b>Saison:</b> Unter «Trainings» → «Saison» siehst du den Wochenplan. Die Saison läuft vom 1. Mai bis 30. April. Ferienwochen und eigenen Saisonstart stellst du dort ein.',
+    '<b>Ferien:</b> Trage Ferien einmal ein und wähle die Mannschaften, für die sie gelten. Im Kalender tippst du auf «🏖 Ferien eintragen», dann auf den ersten und den letzten Ferientag. Alle Ferien mit Bearbeiten und Löschen siehst du unter «Ferien» (im Kalender, in der Saison und auf der Mannschaftsseite). Wochen, in denen alle Trainingstage in den Ferien liegen, gelten als Ferienwoche, die RTP-Wochen rücken dann nach. Ist nur ein Teil der Woche betroffen, entfallen nur die Termine an Ferientagen. Schon geplante Trainings in den Ferien löscht die App nicht, sie sagt dir nur, wie viele es sind. Mit dem Abgleich sehen auch deine Co-Trainer die Ferien.',
     '<b>Sichern:</b> Unter «Mehr» → «Alles exportieren» sicherst du alle Daten in einer Datei, zum Beispiel vor einem Handywechsel.'
   ] },
   { id: 'js', t: 'J+S-Abrechnung', host: true, s: [

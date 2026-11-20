@@ -450,7 +450,7 @@ function removeTrainings(list) {
   toast(`${list.length} Training${list.length > 1 ? 's' : ''} gelöscht`, 'Rückgängig', () => { DB.trainings.push(...list); list.forEach(t => { t.updated = Date.now(); spDel('t', (teamOf(t) || {}).id, t.id, true); }); save(); render(); });
 }
 function modal(html) { $('#modal').innerHTML = `<div class="backdrop" data-a="close"></div><div class="sheet">${html}</div>`; $('#modal').className = 'on'; }
-function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.tsh = null; S.join = null; S.nameCb = null; S.fjoin = null; S.restore = null; }
+function closeModal() { $('#modal').className = ''; $('#modal').innerHTML = ''; S.fer = null; S.tsh = null; S.join = null; S.nameCb = null; S.fjoin = null; S.restore = null; }
 const go = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
 const goR = h => { if (location.hash === '#' + h) render(); else location.replace('#' + h); };   // ersetzt den Verlaufseintrag: nach dem Löschen führt Zurück nicht auf die gelöschte Seite
 const chip = (txt, color) => `<span class="chip" ${color ? `style="--c:${color}"` : ''}>${esc(txt)}</span>`;
@@ -519,6 +519,7 @@ function trailOf() {
   if (p[0] === 'season') return fl ? [...par([TR]), ['Neues Training', mk('/new', ch, seed)], ['Tag wählen']] : [...par([TR]), ['Saison']];
   if (p[0] === 'new') return [...par([TR]), ['Neues Training']];
   if (p[0] === 'plan') return [...par([TR]), ['Ganzen Block planen']];
+  if (p[0] === 'ferien') return [...par([TR]), ['Ferien']];
   if (p[0] === 'teams') return [['Teams']];
   if (p[0] === 'team') {
     if (p[1] === 'new') return [['Teams', '/teams'], ['Neue Mannschaft']];
@@ -910,25 +911,101 @@ function seasonStart(s, y = seasonYear()) {
   const own = (s.starts || {})[y]; return ISO.test(own || '') ? own : seasonDefault(y);
 }
 function seasonCfgFor(tm) {
-  if (tm && !DB.seasons[tm.id]) DB.seasons[tm.id] = { stage: tm.stage, days: [...(tm.days || [2, 4])], time: tm.time || '', hol: [...(DB.season.hol || [])], start: DB.season.start || '' };
+  if (tm && !DB.seasons[tm.id]) DB.seasons[tm.id] = { stage: tm.stage, days: [...(tm.days || [2, 4])], time: tm.time || '', hol: [...(DB.season.hol || [])], start: DB.season.start || '', ...(ferRaw(DB.season).length ? { ferien: JSON.parse(JSON.stringify(ferRaw(DB.season))) } : {}) };
   const s = tm ? DB.seasons[tm.id] : DB.season;
   if (tm) s.days = [...new Set(teamSessions(tm).map(x => x.wd))];   // Trainingstage kommen aus den Einheiten der Mannschaft (alte Felder bleiben als Spiegel)
   s.start = seasonStart(s);
   s.stage = s.stage || DB.stage; s.days = s.days || [2, 4]; s.hol = s.hol || [];
   return s;
 }
+// ---------- Ferien ----------
+// s.ferien = [{ id, name, von, bis }] (ISO-Daten, beliebig weit in der Zukunft, unabhängig vom Saisonjahr) in der Saison-Konfiguration der Mannschaft (DB.seasons[teamId]) bzw. in DB.season (ohne Mannschaft). Das Feld ist optional.
+// Dieselbe Periode mehrerer Mannschaften hat dieselbe id (Übersicht fasst sie zusammen). Der Mannschaftsraum-Abgleich überträgt die ganze Saison-Konfiguration (SP_SEASON klont alles ausser start/days), also auch ferien.
+// Zusammenführung wie bei hol: das neuere tm.u gewinnt die Konfiguration als Ganzes. Ein Löschen taucht darum nicht wieder auf (die Liste des Löschenden ist die neuere); wer gleichzeitig ändert, überschreibt die andere Seite.
+// Wirkung: eine Woche ist Ferienwoche, wenn sie in s.hol steht ODER alle Trainingstage der Mannschaft in dieser Woche in Ferien liegen (ferWeek). Sonst entfallen nur die Termine an Ferientagen (ferAt).
+const ferRaw = s => Array.isArray(s && s.ferien) ? s.ferien : [];
+const ferOk = f => !!f && typeof f.id === 'string' && !!f.id && ISO.test(f.von || '') && ISO.test(f.bis || '') && f.von <= f.bis;
+const ferienOf = s => ferRaw(s).filter(ferOk);
+const ferAt = (s, date) => ferienOf(s).find(f => f.von <= date && date <= f.bis) || null;
+function ferWeek(s, mon, wds) {   // Periode, die alle Trainingstage (ohne Trainingstage: alle 7 Tage) dieser Woche abdeckt, sonst null
+  if (!ferRaw(s).length) return null;
+  const ps = (wds.length ? wds.map(wd => wdOrd(wd)) : [0, 1, 2, 3, 4, 5, 6]).map(o => ferAt(s, iso(addDays(mon, o))));
+  return ps.every(Boolean) ? ps[0] : null;
+}
+const ferPut = (s, f) => { const l = ferRaw(s).filter(x => x && x.id !== f.id); l.push({ id: f.id, name: f.name, von: f.von, bis: f.bis }); l.sort((a, b) => String(a.von).localeCompare(String(b.von))); s.ferien = l; };
+const ferDrop = (s, id) => { const l = ferRaw(s).filter(x => x && x.id !== id); if (l.length) s.ferien = l; else delete s.ferien; };
+const canEditTeam = tm => !!tm && !spRo(spOf(tm.id)) && curRole() !== 'F';   // Funktionär und «Nur lesen»-Mannschaften: nur ansehen
+const ferTeams = () => DB.teams.filter(canEditTeam);
+function ferGroups(tf) {   // Perioden aller Mannschaften (oder einer), gleiche id zusammengefasst, nach Beginn sortiert
+  const m = new Map(), add = (f, tm) => { let g = m.get(f.id); if (!g) m.set(f.id, g = { id: f.id, name: String(f.name || ''), von: f.von, bis: f.bis, tms: [], none: false }); if (tm) g.tms.push(tm); else g.none = true; };
+  DB.teams.forEach(tm => { if (!tf || tm.id === tf) ferienOf(DB.seasons[tm.id]).forEach(f => add(f, tm)); });
+  if (!tf) ferienOf(DB.season).forEach(f => add(f, null));
+  return [...m.values()].sort((a, b) => a.von.localeCompare(b.von) || a.bis.localeCompare(b.bis) || a.name.localeCompare(b.name));
+}
+const ferFind = id => ferGroups('').find(g => g.id === id) || null;
+const ferEditable = g => g.tms.some(canEditTeam) || (g.none && curRole() !== 'F');
+const ferDays = g => Math.round((pd(g.bis) - pd(g.von)) / 864e5) + 1;
+const ferRange = g => g.von === g.bis ? fmtDate(g.von) : fmtDate(g.von) + ' bis ' + fmtDate(g.bis);
+const ferChips = g => g.tms.map(tm => `<span class="chip">${teamDot(tm)}${esc(tm.name)}</span>`).join('') + (g.none ? '<span class="chip">ohne Mannschaft</span>' : '');
+const ferTrainings = g => DB.trainings.filter(t => { if (!t.date || t.date < g.von || t.date > g.bis || isMatch(t)) return false; const tm = teamOf(t); return tm ? g.tms.some(x => x.id === tm.id) : g.none; }).sort(wkSort);   // schon geplante Trainings (keine Wettkämpfe) in den Ferien
+const ferLine = r => {   // Woche nur teilweise in den Ferien: welche Termine entfallen
+  if (!r.fer.length) return '';
+  const ds = [...new Set(r.fer.map(x => WD[x.sess.wd] + ' ' + dm(pd(x.date))))], nm = [...new Set(r.fer.map(x => x.f.name || 'Ferien'))].join(', ');
+  return `<div class="small ferline">🏖 ${esc(nm)}: ${esc(ds.join(', '))} ${ds.length === 1 ? 'entfällt' : 'entfallen'}</div>`;
+};
+const ferCard = (g, ts) => {
+  const n = ts ? ts.length : 0, id = esc(g.id);
+  return `<div class="card item" style="--c:#e0a100"><div class="row"><b>🏖 ${esc(g.name || 'Ferien')}</b><span class="small muted">${ferDays(g)} Tag${ferDays(g) === 1 ? '' : 'e'}</span></div><div class="small">${esc(ferRange(g))}</div><div class="chips">${ferChips(g)}</div>
+    ${n ? `<p class="small ferwarn nomargin">${n === 1 ? '1 geplantes Training liegt' : n + ' geplante Trainings liegen'} in diesen Ferien. <button class="btn sm" data-a="ferSee" data-id="${id}">Ansehen</button></p>` : ''}
+    ${ferEditable(g) ? `<div class="row wrap" style="margin-top:8px"><button class="btn sm" data-a="ferEdit" data-id="${id}">Bearbeiten</button><button class="btn sm danger" data-a="ferDel" data-id="${id}">Löschen</button></div>` : ''}</div>`;
+};
+function viewFerien() {
+  const today = iso(new Date()), gs = ferGroups(''), up = gs.filter(g => g.bis >= today), past = gs.filter(g => g.bis < today).reverse(), can = curRole() !== 'F' && (!DB.teams.length || ferTeams().length > 0);
+  return head('Ferien', null, `<button class="btn pri" data-a="ferNew" ${can ? '' : 'disabled'}>+ Ferien</button>`, 'Ferien der Mannschaften') + `
+  <div class="card"><p class="small nomargin">Fallen alle Trainingstage einer Woche in die Ferien, rücken die RTP-Wochen nach. Sonst entfallen nur die Trainings an Ferientagen.</p></div>
+  ${can ? '' : `<div class="card rotop">🔒 ${curRole() === 'F' ? 'Funktionär – nur ansehen' : 'Nur lesen – Änderungen macht der Haupttrainer'}</div>`}
+  ${up.map(g => ferCard(g, ferTrainings(g))).join('') || '<p class="muted center">Noch keine kommenden Ferien eingetragen.</p>'}
+  ${past.length ? `<details><summary>Vergangene Ferien (${past.length})</summary>${past.map(g => ferCard(g, null)).join('')}</details>` : ''}`;
+}
+function ferCanNew() {
+  if (curRole() === 'F') { toast('Funktionär – nur ansehen'); return false; }
+  if (DB.teams.length && !ferTeams().length) { toast('Nur lesen – Ferien ändert der Haupttrainer'); return false; }
+  return true;
+}
+function ferModal() {
+  const F = S.fer, can = ferTeams(), gen = curRole() !== 'F';
+  modal(`<h2>${F.id ? 'Ferien bearbeiten' : 'Ferien eintragen'}</h2>
+    <label>Name (optional)<input data-b="fe:name" maxlength="40" value="${esc(F.name)}" placeholder="z.B. Herbstferien"></label>
+    <div class="grid2"><label>Von<input type="date" data-b="fe:von" value="${esc(F.von)}"></label><label>Bis<input type="date" data-b="fe:bis" value="${esc(F.bis)}"></label></div>
+    <div class="small muted" style="margin-top:12px">Für welche Mannschaften?</div>
+    ${can.map(tm => `<label class="chk"><input type="checkbox" data-b="fe:t" data-id="${esc(tm.id)}" ${F.tms.includes(tm.id) ? 'checked' : ''}>${teamDot(tm)}${esc(tm.name)}</label>`).join('')}
+    ${gen ? `<label class="chk"><input type="checkbox" data-b="fe:none" ${F.none ? 'checked' : ''}>Ohne Mannschaft (allgemeine Planung)</label>` : ''}
+    ${F.ro.length ? `<p class="small muted">Nur lesen, bleibt unverändert: ${esc(F.ro.join(', '))}</p>` : ''}
+    <p class="small warn" id="ferErr" role="alert"></p>
+    <div class="col"><button class="btn pri" data-a="ferSave">Speichern</button><button class="btn" data-a="close">Abbrechen</button></div>`);
+}
+function ferOpen(o) {   // Vorgabe der Mannschaften: die gewählte Mannschaft (Filter oder Mannschaftsbereich), sonst alle bearbeitbaren
+  const f = teamById(tFilter());
+  S.fer = { id: o.id || '', name: o.name || '', von: o.von || '', bis: o.bis || '', tms: o.tms || (f && canEditTeam(f) ? [f.id] : ferTeams().map(x => x.id)), none: o.none != null ? o.none : !DB.teams.length, ro: o.ro || [] };
+  ferModal();
+}
+function ferSeeModal(g, list) {
+  modal(`<h2>Geplante Trainings in den Ferien</h2><p class="small muted">${esc(g.name || 'Ferien')} · ${esc(ferRange(g))}</p><div class="card">${list.map(t => wkLine(t, true)).join('')}</div><p class="small muted">Die App löscht nichts automatisch. Öffne ein Training, um es zu verschieben oder zu löschen.</p><button class="btn block" data-a="close">Schliessen</button>`);
+}
+
 // Einheiten, an denen die Saison plant: die der Mannschaft, sonst die Tage/Startzeit der allgemeinen Konfiguration
 const planSessions = (s, tm) => tm ? teamSessions(tm, true) : [...s.days].sort((a, b) => wdOrd(a) - wdOrd(b)).map(wd => ({ id: 'd' + wd, wd, time: s.time || '', min: 0, ort: '' }));
 function seasonWeeks(s = seasonCfg(), tm = teamById(S.team)) {
-  const st = stageById(s.stage), out = [], days = planSessions(s, tm);
+  const st = stageById(s.stage), out = [], days = planSessions(s, tm), wds = [...new Set(days.map(x => x.wd))];
   const flat = st.slots ? st.blocks.flatMap(b => b.weeks.map(w => ({ b, w }))) : null;
   let mon = monday(pd(s.start)), k = 0, cnt = {}, lastB = null;
   for (let i = 0; i < 60; i++, mon = addDays(mon, 7)) {
-    const key = iso(mon), hol = s.hol.includes(key), row = { key, mon, hol, days: [] };
+    const key = iso(mon), holW = s.hol.includes(key), holF = ferWeek(s, mon, wds), hol = holW || !!holF, row = { key, mon, hol, holW, holF, days: [], fer: [] };   // holW: Ferienwoche per Knopf, holF: Periode der Ferienliste (alle Trainingstage in Ferien), fer: einzelne Termine an Ferientagen (Woche nur teilweise betroffen)
     if (flat) { if (k >= flat.length) break; if (!hol) { row.b = flat[k].b; row.w = flat[k].w; k++; } }
     else { const mid = addDays(mon, 3); if (i > 8 && mid.getMonth() === 3) break; row.b = st.blocks.find(b => b.monat === MONTHS[mid.getMonth()]); if (!row.b && !hol) row.pause = true; }
     if (!hol && row.b) days.forEach((se, di) => {
-      const d = addDays(mon, wdOrd(se.wd)); let idx = di;
+      const d = addDays(mon, wdOrd(se.wd)), fp = ferAt(s, iso(d)); let idx = di;
+      if (fp) { row.fer.push({ date: iso(d), sess: se, f: fp }); return; }
       if (!flat) { cnt[row.b.nr] = (cnt[row.b.nr] || 0) + 1; idx = (cnt[row.b.nr] - 1) % 12; }
       row.days.push({ date: iso(d), wd: se.wd, idx, sess: se });
     });
@@ -961,7 +1038,7 @@ function viewSeason() {
   const restCard = rest => rest.length ? `<h2>Weitere Trainings (${rest.length})</h2><div class="card">${rest.sort(wkSort).map(t => wkLine(t, !tm)).join('')}</div><p class="small muted">Diese Trainings liegen ausserhalb der Wochen oben oder haben kein Datum.</p>` : '';
   if (!plan) {   // mehrere Mannschaften, keine gewählt: alle Trainings der Saison nach Kalenderwochen, ohne RTP-Beschriftung (die hängt an der Stufe der Mannschaft)
     const keys = [...new Set(all.filter(inWin).map(t => iso(monday(pd(t.date)))))].sort();
-    return trTop('season') + `<div class="card"><b>Saison ${seasonLabel(y)}</b> <span class="muted small">· ${all.filter(inWin).length} Trainings</span>${yearSel}<p class="small muted nomargin">Wähle oben eine Mannschaft, um den RTP-Wochenplan mit Ferienwochen zu sehen und zu planen.</p></div>
+    return trTop('season') + `<div class="card"><b>Saison ${seasonLabel(y)}</b> <span class="muted small">· ${all.filter(inWin).length} Trainings</span>${yearSel}<p class="small muted nomargin">Wähle oben eine Mannschaft, um den RTP-Wochenplan mit Ferienwochen zu sehen und zu planen.</p><p class="small nomargin"><a href="#${kid('/ferien')}">🏖 Ferien eintragen und verwalten</a></p></div>
     ${keys.map(k => `<div class="card week ${k === today ? 'now' : ''}" id="w${k}"><div class="row"><span><b>${dm(pd(k))}–${dm(addDays(pd(k), 6))}</b> ${k === today ? nowChip : ''}</span></div>${lines(k, true)}</div>`).join('') || '<p class="muted center">In dieser Saison gibt es noch keine Trainings.</p>'}
     ${restCard(all.filter(t => !t.date))}`;
   }
@@ -969,16 +1046,17 @@ function viewSeason() {
   const rest = all.filter(t => !t.date || (inWin(t) && !rowKeys.has(iso(monday(pd(t.date))))));
   if (!S.spSeen) S.spSeen = {}; if (!s.set && !S.spSeen[tf || '-']) { S.spSeen[tf || '-'] = 1; S.tsec.add('sp'); }   // noch nie eingestellt: Planungsbereich einmal offen zeigen
   const times = tm ? teamSessions(tm).map(x => WD[x.wd] + (x.time ? ' ' + x.time : '')).join(', ') || 'keine Trainingszeit' : s.days.map(d => WD[d]).join(', ');
+  const ferLink = flow ? '' : `<p class="small"><a href="#${kid('/ferien')}">🏖 Ferien eintragen und verwalten</a></p>`;
   const panel = `<details class="card tsec" data-k="sp" ${S.tsec.has('sp') ? 'open' : ''}><summary><b>Saison planen</b> <span class="muted small">${esc(st.name)} · ab ${fmtDate(s.start)} · ${esc(times)}</span></summary>
     <div class="grid2"><label>Stufe<select data-b="s:stage" data-r="1">${stageOpts(s.stage)}</select></label>${yearSel}</div>
     <div class="grid2"><label>Saisonstart${(s.starts || {})[seasonYear()] ? ' (eigenes Datum)' : ' (Vorgabe 1. Mai)'}<input type="date" data-b="s:startOwn" data-r="1" value="${esc(s.start)}"></label>${tm ? '<span></span>' : `<label>Startzeit<input type="time" data-b="s:time" value="${esc(s.time || '')}"></label>`}</div>
     ${tm ? `<div class="small muted">Trainingszeiten von ${esc(tm.name)}</div><p class="nomargin">${teamSessions(tm).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit.'}</p><p class="small"><a href="#${kid('/team/' + tm.id + '/edit')}">Trainingszeiten bearbeiten</a></p>` : `<div class="small muted">Trainingstage</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${s.days.includes(d) ? 'sel' : ''}" data-a="sDay" data-k="${d}">${WD[d]}</button>`).join('')}</div>`}
-    <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Markiere Ferienwochen unten mit «Ferien» – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'} Freie Einheiten legst du mit «+» an.</p>
+    <p class="small muted">Der RTP geht von ${st.perWeek} Training(s) pro Woche à ${st.minutes} Min. aus. Einzelne Ferienwochen markierst du unten mit «Ferien», längere Ferien trägst du in der Ferienliste ein – ${st.slots ? 'die RTP-Wochen verschieben sich dann automatisch.' : 'in diesen Wochen werden keine Trainings geplant.'} Freie Einheiten legst du mit «+» an.</p>${ferLink}
     ${flow ? '' : `<button class="btn block" data-a="planOpen" data-team="${esc(tf)}" data-s="${esc(s.stage)}" data-mode="season">Ganzen Block planen</button>`}</details>`;
   return trTop('season') + `<p class="small muted nomargin">Saison ${seasonLabel(y)} · ${all.filter(inWin).length} Trainings${tm ? ' · ' + esc(tm.name) : ''}</p>${panel}
   ${rows.map(r => `<div class="card week ${r.key === today ? 'now' : ''} ${r.hol ? 'hol' : ''}" ${r.b ? `style="--c:${efColor(r.b.main.ef)}"` : ''} id="w${r.key}">
-    <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? nowChip : ''}</span><button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button></div>
-    ${r.hol ? '<div class="small muted">Ferienwoche</div>' : r.b ? `<div class="small"><a href="#${kid('/rtp/' + st.id + '/' + r.b.nr)}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>
+    <div class="row"><span><b>${dm(r.mon)}–${dm(addDays(r.mon, 6))}</b> ${r.key === today ? nowChip : ''}</span>${r.holF && !r.holW ? `<a class="btn sm pri" href="#${kid('/ferien')}" aria-label="Ferien aus der Ferienliste, Übersicht öffnen">🏖 Ferienliste ›</a>` : `<button class="btn sm ${r.hol ? 'pri' : ''}" data-a="sHol" data-k="${r.key}">${r.hol ? 'Ferien ✓' : 'Ferien'}</button>`}</div>
+    ${r.hol ? `<div class="small muted">${r.holF ? '🏖 ' + esc(r.holF.name || 'Ferien') + (r.holW ? ' · Ferienwoche' : ' (aus der Ferienliste)') : 'Ferienwoche'}</div>` : r.b ? `<div class="small"><a href="#${kid('/rtp/' + st.id + '/' + r.b.nr)}">Block ${r.b.nr}${r.w ? ` · RTP-Woche ${r.w.w}` : ''}</a> · ${esc(r.b.main.sp || r.b.main.ef)}</div>${ferLine(r)}
       ${r.first ? `<button class="btn sm" data-a="sBlock" data-k="${r.b.nr}">Ganzen Block ${r.b.nr} planen</button>` : ''}${r.ev.length ? `<div class="chips">${r.ev.map(e => chip('📌 ' + e)).join('')}</div>` : ''}` : '<div class="small muted">Saisonpause / frei</div>'}
     ${lines(r.key, false)}
     ${!r.hol && r.b ? `<div class="chips">${missChips(r, byDate, st)}</div>` : ''}</div>`).join('')}
@@ -1025,6 +1103,7 @@ function planCompute(P) {
   if (P.mode === 'season') {
     const info = planInfo(P); if (!info) return c;
     if (P.keep === 'cnt' && fit.less) start = info.first; else {
+    c.holSess = info.rows.reduce((n, r) => n + r.fer.length, 0);   // Termine an Ferientagen in teilweise betroffenen Wochen
     info.rows.forEach(r => [...new Set(r.days.map(d => d.date))].forEach(date => {
       const ds = r.days.filter(d => d.date === date), m = matchDay(day(date), ds.map(d => d.sess));
       ds.forEach((d, i) => m.hit[i] ? c.skipped.push({ date, sess: d.sess }) : c.items.push({ date, sess: d.sess, w: r.w, idx: d.idx }));
@@ -1034,7 +1113,7 @@ function planCompute(P) {
   if (!start) return c;
   const sess = tm ? teamSessions(tm, true) : (P.days || []).map(wd => ({ id: 'd' + wd, wd, time: P.time || '', min: 0, ort: '' }));
   if (!sess.length) { c.noSess = true; return c; }
-  const hol = new Set(cfg.hol || []), seen = new Set();
+  const hol = new Set(cfg.hol || []), seen = new Set(), wds = [...new Set(sess.map(x => x.wd))], holWk = mk => hol.has(mk) || !!ferWeek(cfg, pd(mk), wds);   // Ferienwoche: per Knopf oder alle Trainingstage in einer Ferienperiode
   if (P.mode === 'own' && (P.keep !== 'cnt' || fit.exact)) {   // Länge behalten: N RTP-Wochen = N×7 Tage ab Starttag (eingeschlossen), Abschnitt k (je 7 Tage) bekommt RTP-Woche k; Tage in Ferienwochen entfallen, der Block wird nicht länger
     const from = pd(start); let cnt = 0;
     c.range = { from: start, to: iso(addDays(from, fit.N * 7 - 1)), days: fit.N * 7 };
@@ -1044,7 +1123,7 @@ function planCompute(P) {
         const d = addDays(from, k * 7 + o);
         const ds = sess.filter(x => x.wd === d.getDay()).sort((a, b2) => a.time.localeCompare(b2.time)); if (!ds.length) continue;
         const date = iso(d);
-        if (hol.has(iso(monday(d)))) { ds.forEach(se => free.push({ date, sess: se, hol: true })); continue; }
+        if (holWk(iso(monday(d))) || ferAt(cfg, date)) { ds.forEach(se => free.push({ date, sess: se, hol: true })); continue; }   // Ferientag: Termin entfällt, die RTP-Woche verschiebt sich nicht
         const m = matchDay(day(date), ds);
         ds.forEach((se, i) => m.hit[i] ? c.skipped.push({ date, sess: se }) : free.push({ date, sess: se }));
       }
@@ -1058,9 +1137,10 @@ function planCompute(P) {
   }
   let d = pd(start), q = 0;
   for (let n = 0; n < 800 && q < list.length; n++, d = addDays(d, 1)) {
-    const mk = iso(monday(d)); if (hol.has(mk)) { seen.add(mk); continue; }
+    const mk = iso(monday(d)); if (holWk(mk)) { seen.add(mk); continue; }
     const ds = sess.filter(x => x.wd === d.getDay()).sort((a, b2) => a.time.localeCompare(b2.time)); if (!ds.length) continue;
-    const date = iso(d), m = matchDay(day(date), ds);
+    const date = iso(d); if (ferAt(cfg, date)) { c.holSess += ds.length; continue; }
+    const m = matchDay(day(date), ds);
     ds.forEach((se, i) => { if (q >= list.length) return; if (m.hit[i]) c.skipped.push({ date, sess: se }); else c.items.push({ date, sess: se, ...list[q++] }); });
   }
   c.hol = seen.size; return c;
@@ -1098,7 +1178,7 @@ function viewPlan() {
         : `<p class="small muted">Der Block dauert ${wk(spanWeeks(first.date, last.date))} statt ${wk(sh.N)}, weil pro Woche nur ${sh.have} von ${sh.rtp} RTP-Trainings Platz ${sh.have === 1 ? 'hat' : 'haben'}.</p>`)
         : (c.items.length < c.total ? `<p class="small muted nomargin">Der Block hat ${c.total} Trainings; ${c.total - c.items.length} davon fallen nicht in den Saisonplan oder auf schon belegte Tage.</p>` : ''))
     : !c.range ? (fit.N !== spanWeeks(first.date, last.date) ? `<p class="small muted">Der Block dauert ${wk(spanWeeks(first.date, last.date))} (RTP: ${wk(fit.N)}).</p>` : '')
-    : `${c.holSess ? `<p class="small warn">${pl(c.holSess, 'Termin entfällt', 'Termine entfallen')} wegen Ferien (Ferienwoche der Saison-Konfiguration); der Block wird dadurch nicht länger.</p>` : ''}${c.dropped ? `<p class="small warn">${pl(c.dropped, 'RTP-Training', 'RTP-Trainings')} ${c.dropped === 1 ? 'fällt' : 'fallen'} weg, weil in diesen Wochen weniger Einheiten als RTP-Trainings zur Verfügung stehen.</p>` : ''}${c.free ? `<p class="small muted">${pl(c.free, 'Einheit bleibt', 'Einheiten bleiben')} frei, weil der RTP in diesen Wochen weniger Trainings vorsieht.</p>` : ''}`;
+    : `${c.holSess ? `<p class="small warn">${pl(c.holSess, 'Termin entfällt', 'Termine entfallen')} wegen Ferien (Ferienliste oder Ferienwoche der Saison); der Block wird dadurch nicht länger.</p>` : ''}${c.dropped ? `<p class="small warn">${pl(c.dropped, 'RTP-Training', 'RTP-Trainings')} ${c.dropped === 1 ? 'fällt' : 'fallen'} weg, weil in diesen Wochen weniger Einheiten als RTP-Trainings zur Verfügung stehen.</p>` : ''}${c.free ? `<p class="small muted">${pl(c.free, 'Einheit bleibt', 'Einheiten bleiben')} frei, weil der RTP in diesen Wochen weniger Trainings vorsieht.</p>` : ''}`;
   const sessTxt = tm ? teamSessions(tm, true).map(x => esc(sessSummary(tm, x))).join('<br>') || 'Noch keine Trainingszeit' : '';
   let ownBox = '';
   if (P.mode === 'own' && fit) {
@@ -1118,7 +1198,8 @@ function viewPlan() {
     ${shortBox}</div>` : '';
   const prev = c ? `<div class="card item" style="--c:${efColor(c.b.main.ef)}"><h3 class="nomargin">3 · Vorschau</h3>${c.noSess ? '<p class="warn">Keine Trainingszeit vorhanden – lege Trainingstage fest.</p>' : c.items.length ? `<p class="nomargin"><b>${pl(c.items.length, 'Training', 'Trainings')}</b> · ${st.id} · Block ${c.b.nr} (${esc(c.b.main.sp || c.b.main.ef)}) · ${esc(who)}</p><p class="nomargin">${c.range ? rangeTxt(c.range) : `${fmtDate(first.date)} bis ${fmtDate(last.date)} · ${wk(spanWeeks(first.date, last.date))}`}</p>${note}` : '<p class="muted">Keine Trainings zu planen (Datum prüfen).</p>'}
     ${c.skipped.length ? `<p class="small warn">${c.skipped.length} Tag${c.skipped.length > 1 ? 'e sind' : ' ist'} schon mit einem Training belegt und ${c.skipped.length > 1 ? 'werden' : 'wird'} nicht doppelt belegt: ${c.skipped.slice(0, 6).map(x => dm(pd(x.date)) + (x.sess.time ? ' ' + x.sess.time : '')).join(', ')}${c.skipped.length > 6 ? ' …' : ''}${P.mode === 'own' ? (c.range ? ' (diese Termine entfallen, der Block wird nicht länger).' : ' (der Block rückt auf den nächsten freien Termin).') : '.'}</p>` : ''}
-    ${c.hol && !c.range ? `<p class="small muted">${c.hol} Ferienwoche${c.hol > 1 ? 'n' : ''} der Saison-Konfiguration ${c.hol > 1 ? 'werden' : 'wird'} übersprungen.</p>` : ''}
+    ${c.hol && !c.range ? `<p class="small muted">${c.hol} Ferienwoche${c.hol > 1 ? 'n' : ''} der Saison ${c.hol > 1 ? 'werden' : 'wird'} übersprungen.</p>` : ''}
+    ${c.holSess && !c.range ? `<p class="small muted">${pl(c.holSess, 'Termin entfällt', 'Termine entfallen')} wegen Ferien (Ferienliste).</p>` : ''}
     ${c.items.length ? `<details><summary class="small">Alle Termine</summary>${c.items.map(x => `<div class="small">${fmtDate(x.date)}${x.sess.time ? ' · ' + x.sess.time : ''} · ${x.w ? 'Woche ' + x.w.w + ' · ' : ''}Training ${x.idx + 1}</div>`).join('')}</details><button class="btn pri block" data-a="planGo">${pl(c.items.length, 'Training', 'Trainings')} anlegen</button>` : ''}</div>` : '';
   return head('Ganzen Block planen', null, '', esc(who), ctxBar('plan', n)) + `<div class="card"><h3 class="nomargin">1 · Mannschaft und Block</h3>
     <label>Mannschaft<select data-b="p:team" data-r="1">${opt('', 'Ohne Mannschaft', P.team)}${DB.teams.map(x => opt(x.id, x.name, P.team)).join('')}</select></label>
@@ -1133,16 +1214,21 @@ function viewCal() {
   const c = S.cal || (S.cal = { y: now.getFullYear(), m: now.getMonth(), day: todayIso });
   const byDate = {}; DB.trainings.forEach(t => { if (!t.date) return; const tm = teamOf(t); if (tf && (!tm || tm.id !== tf)) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
   const first = new Date(c.y, c.m, 1), start = monday(first), weeks = Math.ceil(((first.getDay() + 6) % 7 + new Date(c.y, c.m + 1, 0).getDate()) / 7);
+  const fm = S.calFer, ftm = tf ? [teamById(tf)] : DB.teams, fcf = [...ftm.map(x => (x && DB.seasons[x.id]) || {}), ...(!tf && ferienOf(DB.season).length ? [DB.season] : [])];   // Konfigurationen, deren Ferien der Kalender zeigt
+  const fz = k => { const n = fcf.filter(s => ferAt(s, k)).length; return n ? (n === fcf.length ? 2 : 1) : 0; };   // 2 = alle gezeigten Mannschaften in den Ferien, 1 = nur einige
   const cells = []; for (let i = 0; i < weeks * 7; i++) {
-    const d = addDays(start, i), k = iso(d), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color), ms = ts.map(isMatch);
-    cells.push(`<button class="cal-d ${d.getMonth() !== c.m ? 'oth' : ''} ${k === todayIso ? 'today' : ''} ${k === c.day ? 'sel' : ''}" data-a="calDay" data-d="${k}" aria-label="${WDL[d.getDay()]}, ${dm(d)}${ts.length ? ', ' + ts.length + ' Training' + (ts.length > 1 ? 's' : '') : ''}"><span class="n">${d.getDate()}</span><span class="dots">${cols.slice(0, 3).map((col, j) => `<i${ms[j] ? ' class="m"' : ''} style="background:${esc(col)}"></i>`).join('')}${cols.length > 3 ? `<b>+${cols.length - 3}</b>` : ''}</span></button>`);
+    const d = addDays(start, i), k = iso(d), fk = fz(k), ts = byDate[k] || [], cols = ts.map(t => (teamOf(t) || { color: '#6b7785' }).color), ms = ts.map(isMatch);
+    cells.push(`<button class="cal-d ${d.getMonth() !== c.m ? 'oth' : ''} ${k === todayIso ? 'today' : ''} ${k === c.day && !fm ? 'sel' : ''} ${fk === 2 ? 'fer' : fk === 1 ? 'ferp' : ''} ${fm && fm.a === k ? 'fsel' : ''}" data-a="calDay" data-d="${k}" aria-label="${WDL[d.getDay()]}, ${dm(d)}${fk ? ', Ferien' : ''}${ts.length ? ', ' + ts.length + ' Training' + (ts.length > 1 ? 's' : '') : ''}"><span class="n">${d.getDate()}</span><span class="dots">${cols.slice(0, 3).map((col, j) => `<i${ms[j] ? ' class="m"' : ''} style="background:${esc(col)}"></i>`).join('')}${cols.length > 3 ? `<b>+${cols.length - 3}</b>` : ''}</span></button>`);
   }
   const day = c.day ? pd(c.day) : null, dts = day ? (byDate[c.day] || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')) : [];
   const card = t => { const tm = teamOf(t); return `<a class="card tcard item ${reflDone(t) ? 'done' : ''}" style="--c:${esc(tm ? tm.color : '#6b7785')}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div><div class="muted small">${tm ? teamDot(tm) + '<b>' + esc(tm.name) + '</b> · ' : ''}${[tTime(t), t.ort, tSub(t)].filter(Boolean).map(esc).join(' · ') || 'ohne Uhrzeit'}</div></a>`; };
-  return trTop('cal') + `
+  const fday = c.day ? ferGroups(tf).filter(g => g.von <= c.day && c.day <= g.bis) : [];
+  const fhint = fm ? `<div class="card ferhint"><b>🏖 Ferien eintragen</b><p class="small nomargin">${!fm.a ? 'Schritt 1 von 2: Tippe auf den <b>ersten</b> Ferientag. Mit ‹ › wechselst du den Monat.' : `Schritt 2 von 2: Tippe auf den <b>letzten</b> Ferientag (erster Tag: ${esc(fmtDate(fm.a))}). Für einen einzelnen Tag tippst du denselben Tag nochmals an.`}</p><button class="btn sm" data-a="calFerX" style="margin-top:6px">Abbrechen</button></div>` : '';
+  return trTop('cal') + fhint + `
   <div class="row calnav"><button class="btn" data-a="calNav" data-d="-1" aria-label="Voriger Monat">‹</button><b class="grow center">${MONTHS[c.m]} ${c.y}</b><button class="btn" data-a="calNav" data-d="1" aria-label="Nächster Monat">›</button><button class="btn sm" data-a="calToday">Heute</button></div>
   <div class="cal"><div class="cal-h">${[1, 2, 3, 4, 5, 6, 0].map(d => `<span>${WD[d]}</span>`).join('')}</div><div class="cal-g">${cells.join('')}</div></div>
-  ${day ? `<h2>${WDL[day.getDay()]}, ${dm(day)}${day.getFullYear()}</h2>${dts.map(card).join('') || '<p class="muted">An diesem Tag ist kein Training geplant.</p>'}<button class="btn pri block" data-a="newT" data-team="${esc(tf)}" data-date="${c.day}">+ Training an diesem Tag</button>` : '<p class="muted small center">Tippe auf einen Tag, um seine Trainings zu sehen oder eines anzulegen.</p>'}`;
+  ${fm ? '' : `<div class="row wrap" style="margin-top:10px"><button class="btn" data-a="calFer">🏖 Ferien eintragen</button><a class="btn" href="#${kid('/ferien')}">Ferien ansehen</a></div>`}
+  ${fm ? '' : day ? `<h2>${WDL[day.getDay()]}, ${dm(day)}${day.getFullYear()}</h2>${fday.map(g => ferCard(g)).join('')}${dts.map(card).join('') || '<p class="muted">An diesem Tag ist kein Training geplant.</p>'}<button class="btn pri block" data-a="newT" data-team="${esc(tf)}" data-date="${c.day}">+ Training an diesem Tag</button>` : '<p class="muted small center">Tippe auf einen Tag, um seine Trainings zu sehen oder eines anzulegen.</p>'}`;
 }
 
 // ---------- Ansichten: Mannschaften ----------
@@ -1161,7 +1247,7 @@ function viewTeam(id) {
   const card = t => `<a class="card tcard ${t.date && t.date < today ? 'past' : ''} ${reflDone(t) ? 'done' : ''}" href="#${kid('/t/' + t.id)}"><div class="row"><b>${tIco(t)}${esc(t.title || 'Ohne Titel')}</b><span class="muted">${tMin(t)}</span></div><div class="muted small">${metaLine(t, false)}</div>${reflTag(t)}<div class="bar">${t.items.map(i => `<i style="flex:${+i.min || 1};background:${(TYPES[i.type] || TYPES.sonst)[1]}"></i>`).join('')}</div></a>`;
   return head(tm.name, '/teams', `<a class="btn" href="#${kid('/team/' + tm.id + '/edit')}">Bearbeiten</a>`, esc((stageById(tm.stage) || {}).name || '')) + doneBar('/team/' + tm.id) + `
   <div class="card item" style="--c:${esc(tm.color)}"><div class="small muted">Trainingszeiten (Vorgaben für neue Trainings)</div>${sessLines(tm)}</div>
-  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button>${canShareTeam(tm) ? `<button class="btn" data-a="teamShare" data-k="${tm.id}">Mannschaft teilen</button>` : ''}</div>
+  <div class="row wrap"><button class="btn pri" data-a="newT" data-team="${tm.id}">+ Training hinzufügen</button><button class="btn" data-a="matchNew" data-team="${tm.id}">+ Wettkampf</button><button class="btn" data-a="teamSeason" data-k="${tm.id}">Saison planen</button><button class="btn" data-a="planOpen" data-team="${tm.id}" data-mode="season">Ganzen Block planen</button><button class="btn" data-a="calTeam" data-k="${tm.id}">Kalender</button><a class="btn" href="#${kid('/ferien')}">🏖 Ferien</a>${canShareTeam(tm) ? `<button class="btn" data-a="teamShare" data-k="${tm.id}">Mannschaft teilen</button>` : ''}</div>
   ${spCard(tm)}${memCard(tm)}${playersCard(tm)}${awSection(tm)}${rbCard(tm)}<h2>Kommende Trainings (${up.length})</h2>${up.map(card).join('') || '<p class="muted">Noch nichts geplant. Tippe auf «Training hinzufügen», «Saison planen» oder «Ganzen Block planen».</p>'}
   ${past.length ? `<details><summary>Vergangene Trainings (${past.length})</summary>${past.map(card).join('')}</details>` : ''}`;
 }
@@ -1871,7 +1957,7 @@ function roTeam() {
   else if (p[0] === 'season') tm = teamById(S.team);
   const sp = tm && spOf(tm.id); return tm && (spRo(sp) || curRole() === 'F') ? tm : null;
 }
-const RO_A = new Set(['newT', 'mv', 'grip', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
+const RO_A = new Set(['newT', 'mv', 'grip', 'delI', 'dupI', 'newEx', 'freeToC', 'addG', 'pick', 'dupT', 'delT', 'attTog', 'attAll', 'attNone', 'plAdd', 'plEdit', 'plBulk', 'planOpen', 'sBlock', 'sNew', 'sDay', 'sHol', 'calFer', 'ferNew', 'ferEdit', 'ferDel', 'ferSave', 'swNew', 'saveTeam', 'delTeam', 'mAddS', 'mDelS', 'mColor', 'flow', 'reflGoal', 'reflScale', 'reflVote', 'reflPl', 'reflSave', 'reflSeen', 'reflSeenM', 'matchNew', 'matchAddOpp', 'matchDelOpp', 'matchEnd', 'mgAdd', 'mgDel', 'reflMScale', 'reflMPh']);
 function roApply() {
   const tm = roTeam(); if (!tm) return;
   const app = $('#app'); app.querySelectorAll('.grip').forEach(e => e.remove()); app.querySelectorAll('[data-b]').forEach(e => e.disabled = true); app.querySelectorAll('[data-a]').forEach(e => { if (RO_A.has(e.dataset.a)) e.disabled = true; });
@@ -2341,6 +2427,7 @@ function render() {
   if (p[0] === 'new') { if (render.newKey !== h) S.seed = { team: r.Q.tm || '', date: r.Q.d || '' }; render.newKey = h; }
   else { render.newKey = ''; if (!S.flow) S.seed = { team: '', date: '' }; }
   if (p[0] !== 'team') S.mf = null;
+  if (p[0] !== 'cal') S.calFer = null;   // Ferien-Auswahl im Kalender gilt nur, solange man dort bleibt
   if (p[0] !== 'plan') S.plan = null; else if (!S.plan) S.plan = { team: r.Q.tm || '', stage: r.Q.st || '', block: +r.Q.bl || 0, mode: r.Q.md || 'season', start: '', days: null, time: null };
   const ctk = ctxTeam(r);   // Kalender/Saison/Planung aus der Mannschaftsseite: der Mannschaftsfilter ist diese Mannschaft; der eigene Filter der Trainings-Ansicht kommt danach zurück
   if (ctk) { if (S.tf === undefined) S.tf = S.team || ''; S.team = ctk.id; } else if (S.tf !== undefined) { S.team = S.tf; S.tf = undefined; }
@@ -2366,6 +2453,7 @@ function render() {
     html = b ? viewBlock(st, b) : viewRtp();
   } else if (p[0] === 'season') html = viewSeason();
   else if (p[0] === 'plan') { html = viewPlan(); tab = '/'; }
+  else if (p[0] === 'ferien') { html = viewFerien(); tab = '/'; }
   else if (p[0] === 'admin') { html = viewAdmin(); tab = '/more'; }
   else if (p[0] === 'clubsetup') { html = viewClubSetup(); tab = '/more'; }
   else if (p[0] === 'more') html = viewMore();
@@ -2405,7 +2493,45 @@ const A = {
   crumbStage(el) { DB.stage = el.dataset.k; save(); },   // Brotkrumen «RTP › D-Junioren»: Stufe merken, der Link öffnet die Stufenübersicht
   calNav(el) { const c = S.cal, d = new Date(c.y, c.m + +el.dataset.d, 1); c.y = d.getFullYear(); c.m = d.getMonth(); c.day = ''; render(); },
   calToday() { const n = new Date(); S.cal = { ...(S.cal || {}), y: n.getFullYear(), m: n.getMonth(), day: iso(n) }; render(); },
-  calDay(el) { const c = S.cal, d = pd(el.dataset.d); c.day = el.dataset.d; c.y = d.getFullYear(); c.m = d.getMonth(); render(); },
+  calDay(el) {
+    const c = S.cal, F = S.calFer, k = el.dataset.d;
+    if (F) {   // Ferien eintragen: erster Tag, dann letzter Tag, dann Fenster mit Name, Von/Bis und Mannschaften
+      if (!F.a) { F.a = k; render(); return; }
+      S.calFer = null; render(); ferOpen({ von: F.a < k ? F.a : k, bis: F.a < k ? k : F.a }); return;
+    }
+    const d = pd(k); c.day = k; c.y = d.getFullYear(); c.m = d.getMonth(); render();
+  },
+  calFer() { if (ferCanNew()) { S.calFer = { a: '' }; render(); scrollTo(0, 0); } },
+  calFerX() { S.calFer = null; render(); },
+  ferNew() { if (ferCanNew()) ferOpen({}); },
+  ferEdit(el) {
+    const g = ferFind(el.dataset.id); if (!g) return;
+    if (!ferEditable(g)) return toast('Nur ansehen: Diese Ferien kannst du nicht ändern');
+    ferOpen({ id: g.id, name: g.name, von: g.von, bis: g.bis, tms: g.tms.filter(canEditTeam).map(x => x.id), none: g.none, ro: g.tms.filter(x => !canEditTeam(x)).map(x => x.name) });
+  },
+  ferSave() {
+    const F = S.fer; if (!F) return; const err = m => { const e = $('#ferErr'); if (e) e.textContent = m; };
+    const name = String(F.name || '').trim().slice(0, 40), real = s => ISO.test(s || '') && iso(pd(s)) === s;
+    if (!real(F.von) || !real(F.bis)) return err('Bitte trage «Von» und «Bis» als Datum ein.');
+    if (F.bis < F.von) return err('«Bis» liegt vor «Von».');
+    const sel = ferTeams().filter(tm => F.tms.includes(tm.id)), none = !!F.none && curRole() !== 'F';
+    if (!sel.length && !none) return err('Wähle mindestens eine Mannschaft.');
+    const f = { id: F.id || uid(), name, von: F.von, bis: F.bis };
+    for (const tm of ferTeams()) { const has = ferRaw(DB.seasons[tm.id]).some(x => x && x.id === f.id); if (sel.includes(tm)) { ferPut(seasonCfgFor(tm), f); spU(tm.id); } else if (has) { ferDrop(DB.seasons[tm.id], f.id); spU(tm.id); } }
+    if (curRole() !== 'F') { if (none) ferPut(DB.season, f); else if (ferRaw(DB.season).some(x => x && x.id === f.id)) ferDrop(DB.season, f.id); }
+    closeModal(); save(); render();
+    const g = { ...f, tms: sel, none }, ts = ferTrainings(g), n = ts.length;
+    if (n) toast(`Ferien gespeichert. ${n === 1 ? '1 geplantes Training liegt' : n + ' geplante Trainings liegen'} in diesen Ferien.`, 'Ansehen', () => ferSeeModal(g, ts)); else toast('Ferien gespeichert');
+  },
+  ferDel(el) {
+    const g = ferFind(el.dataset.id); if (!g) return;
+    const cfgs = [...g.tms.filter(canEditTeam).map(tm => ({ tm, s: DB.seasons[tm.id] })), ...(g.none && curRole() !== 'F' ? [{ tm: null, s: DB.season }] : [])];
+    if (!cfgs.length) return toast('Nur ansehen: Diese Ferien kannst du nicht ändern');
+    const snap = cfgs.map(({ tm, s }) => ({ tm, old: JSON.parse(JSON.stringify(ferRaw(s))) }));
+    cfgs.forEach(({ tm, s }) => { ferDrop(s, g.id); if (tm) spU(tm.id); }); save(); render();
+    toast(`Ferien «${g.name || 'Ferien'}» gelöscht`, 'Rückgängig', () => { snap.forEach(({ tm, old }) => { const s = tm ? DB.seasons[tm.id] : DB.season; if (!s) return; s.ferien = old; if (tm) spU(tm.id); }); save(); render(); });
+  },
+  ferSee(el) { const g = ferFind(el.dataset.id); if (g) ferSeeModal(g, ferTrainings(g)); },
   calTeam(el) { go(kid('/cal')); },   // «Kalender» auf der Mannschaftsseite: Teams › Mannschaft › Kalender
   newT(el) { go(kid('/new', { tm: el.dataset.team, d: el.dataset.date })); },
   flow(el) { const k = el.dataset.k; if (k === 'blank') return A.blankT(); if (k === 'match') return A.matchNew({ dataset: { team: S.seed.team, date: S.seed.date } }); const tm = teamById(S.seed.team); if (tm) { if (k === 'rtp') DB.stage = tm.stage; else S.team = tm.id; save(); } go(mk(k === 'rtp' ? '/rtp' : '/season', route().chain, { fl: k, tm: S.seed.team, d: S.seed.date })); },
@@ -2800,6 +2926,14 @@ function onInput(ev) {
   else if (k === 'aw') S.aw[a] = v;
   else if (k === 'tsh') { S.tsh[a] = a === 'pl' ? el.checked : v; buildTeamShare(); return; }
   else if (k === 'f') { S.seed[a] = v; return; }
+  else if (k === 'fe') {   // Ferien-Fenster: Name, Von, Bis, Mannschaften
+    const F = S.fer; if (!F) return;
+    if (a === 't') { const id = el.dataset.id; F.tms = el.checked ? [...new Set([...F.tms, id])] : F.tms.filter(x => x !== id); }
+    else if (a === 'none') F.none = el.checked;
+    else if (a === 'name') F.name = String(v).slice(0, 40);
+    else if (a === 'von' || a === 'bis') { F[a] = String(v); if (a === 'von' && v && !F.bis) { F.bis = F.von; const bi = $('[data-b="fe:bis"]'); if (bi) bi.value = F.bis; } }
+    const e = $('#ferErr'); if (e) e.textContent = ''; return;
+  }
   else if (k === 'p') { const P = S.plan; P[a] = a === 'block' ? +v || 0 : v; if (a === 'team') { const tm = teamById(v); P.stage = tm ? seasonCfgFor(tm).stage || tm.stage : P.stage; P.block = 0; } if (a === 'stage') P.block = 0; }
   else if (k === 'm') { const f = S.mf; f[a] = v; if (a === 'stage' && !f.minEdited) f.sessions.forEach(x => x.min = stageById(v).minutes); }
   else if (k === 'ms') { const f = S.mf, x = f.sessions.find(y => y.id === a); if (!x) return; x[b] = b === 'wd' ? +v : v; if (b === 'min') f.minEdited = 1; }
