@@ -12,7 +12,16 @@ const nl2br = s => esc(s).replace(/\n/g, '<br>');
 const KEY = 'unihockey-planer.v1';
 const EMPTY = () => ({ v: 1, trainings: [], custom: [], notes: {}, season: {}, stage: 'D', teams: [], seasons: {} });
 let DB = EMPTY();
-try { DB = Object.assign(EMPTY(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* leer starten */ }
+// Sicherung beim Laden: Ist der gespeicherte Stand nicht lesbar, wird er zuerst unverändert unter KEY + '.defekt-<Zeit>' kopiert (LOADFAIL = dieser Schlüssel),
+// erst danach darf die App neu speichern. Klappt die Kopie nicht (LOADFAIL = '!'), speichert die App gar nicht, damit nichts überschrieben wird (Zugänge!).
+let LOADFAIL = '';
+try {
+  const raw = localStorage.getItem(KEY);
+  if (raw) { const o = JSON.parse(raw); if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('kein Objekt'); DB = Object.assign(EMPTY(), o); }
+} catch (e) {
+  DB = EMPTY();
+  try { const raw = localStorage.getItem(KEY); if (raw) { const bk = KEY + '.defekt-' + Date.now(); localStorage.setItem(bk, raw); LOADFAIL = bk; } } catch (e2) { LOADFAIL = '!'; }
+}
 // Abgleich «Mannschaftsraum»: Konfiguration aus sync-config.js. Entwickler-Schalter: nur auf localhost/127.0.0.1 mit ?sync=dev (gilt für die Sitzung) wird der lokale Test-Server benutzt.
 const SYNCCFG = (() => {
   let c = window.SYNC || {};
@@ -29,7 +38,7 @@ const SP = { chain: Promise.resolve(), pend: new Map(), st: {}, t: null };   // 
 let saveT;
 let wiped = false;   // nach «Alle Daten löschen»: ein leerer Stand wird nicht mehr zurückgeschrieben (auch nicht beim Verlassen der Seite)
 const dbEmpty = () => !DB.trainings.length && !DB.teams.length && !DB.custom.length && !Object.keys(DB.notes || {}).length && !Object.keys(DB.spaces || {}).length && !Object.keys(DB.seasons || {}).length;
-const flush = () => { if (wiped && dbEmpty()) return; wiped = false; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
+const flush = () => { if (LOADFAIL === '!' || (wiped && dbEmpty())) return; wiped = false; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 200); spDirty(); };
 addEventListener('pagehide', flush);
 
@@ -3017,3 +3026,8 @@ document.addEventListener('pointerdown', ev => {
   const a = ev.target.closest && ev.target.closest('a.utp'); if (!a) return;
   const l = document.createElement('link'); l.rel = 'preconnect'; l.href = new URL(a.href).origin; document.head.appendChild(l); setTimeout(() => l.remove(), 15000);
 }, { passive: true });
+// Hinweis, wenn der gespeicherte Stand beim Start nicht lesbar war (siehe LOADFAIL oben)
+A.loadFailDl = () => { try { saveBlob('trainingsplaner-sicherung-' + iso(new Date()) + '.json', new Blob([localStorage.getItem(LOADFAIL) || ''], { type: 'application/json' })); } catch (e) { toast('Kopie nicht erreichbar'); } };
+if (LOADFAIL) setTimeout(() => modal(LOADFAIL === '!'
+  ? '<h2>Speicher nicht lesbar</h2><p class="small">Deine gespeicherten Daten konnten nicht gelesen werden. Damit nichts verloren geht, speichert die App in dieser Sitzung nichts. Schliesse die App und öffne sie neu. Hilft das nicht, melde dich beim Admin.</p><div class="col"><button class="btn" data-a="close">Verstanden</button></div>'
+  : '<h2>Daten nicht lesbar</h2><p class="small">Deine gespeicherten Daten konnten nicht gelesen werden. Die App hat sie unverändert als Kopie auf diesem Gerät gesichert, sie gehen nicht verloren. Lade die Kopie herunter und schick sie dem Admin, damit er sie wiederherstellen kann.</p><div class="col"><button class="btn pri" data-a="loadFailDl">Kopie herunterladen</button><button class="btn" data-a="close">Später</button></div>'), 300);
